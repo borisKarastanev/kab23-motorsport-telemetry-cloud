@@ -1,11 +1,5 @@
 import { AbstractRepository } from '@app/common';
-import {
-  ConflictException,
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
@@ -30,22 +24,17 @@ export class UsersRepository extends AbstractRepository<User> {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const user = new User({
-      email,
+      // Normalized on the way in so the unique index is a real one-account-per-
+      // address rule, and so team invites match the address as typed.
+      email: email.toLowerCase(),
       password: hashedPassword,
       displayName,
       role,
     });
 
-    try {
-      return await this.create(user);
-    } catch (error) {
-      if (error.code === '23505') {
-        // Deliberately does not echo the address back — a message naming the
-        // email turns registration into an account-enumeration oracle.
-        throw new ConflictException('Registration failed');
-      }
-      throw new InternalServerErrorException();
-    }
+    // Deliberately does not echo the address back — a message naming the email
+    // turns registration into an account-enumeration oracle.
+    return this.createOrConflict(user, 'Registration failed');
   }
 
   async validateUser(email: string, password: string): Promise<User> {
@@ -53,7 +42,7 @@ export class UsersRepository extends AbstractRepository<User> {
     // so the repository's NotFoundException never escapes as a 404.
     let user: User;
     try {
-      user = await this.findOne({ email });
+      user = await this.findOne({ email: email.toLowerCase() });
     } catch {
       throw new UnauthorizedException('Invalid credentials');
     }
