@@ -14,3 +14,5 @@ frontend/.angular
 CLAUDE.md
 skills-lock.json
 .claude
+.agents
+.codex
