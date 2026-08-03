@@ -31,7 +31,7 @@ ingress.
 
 ## Prerequisites
 
-- **Node 22** (Angular 22 requires ≥ 22.22.3) — see `.nvmrc`; run `nvm use`.
+- **Node 24.18.1** (Angular 22 requires ≥ 22.22.3) — see `.nvmrc`; run `nvm use`.
 - pnpm 9, Docker + Docker Compose.
 
 ## Run (localhost)
