@@ -31,6 +31,16 @@ jobs:
 
       - name: Test
         run: pnpm test -- --passWithNoTests
+        env:
+          # Dummy values only — these specs mock every repository and never open
+          # a real connection. ConfigModule still validates presence eagerly at
+          # import time (Joi in libs/common/src/config/config.module.ts), so the
+          # keys must exist even though nothing reads them for real.
+          DB_HOST: localhost
+          DB_USERNAME: test
+          DB_PASSWORD: test
+          DB_DATABASE: test
+          JWT_SECRET: test-jwt-secret-not-for-production
 
       - name: Build
         run: pnpm run build
