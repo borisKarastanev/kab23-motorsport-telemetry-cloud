@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+frontend
+.git
+
+# Secrets must never be baked into an image layer — they are passed at runtime
+# via env_file / secret mounts, and an image layer survives deleting the file.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+mosquitto/config/passwd
+CLAUDE.md

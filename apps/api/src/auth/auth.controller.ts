@@ -1,0 +1,54 @@
+import {
+  Body,
+  ClassSerializerInterceptor,
+  Controller,
+  Get,
+  Post,
+  Res,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { Response } from 'express';
+import { AuthenticatedUser } from '@app/common';
+import { AuthService } from './auth.service';
+import { UsersService } from '../users/users.service';
+import { CreateUserDto } from '../users/dto/create-user.dto';
+import { User } from '../users/entities/user.entity';
+import { LocalAuthGuard } from './guards/local-auth.guard';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+
+@Controller('auth')
+@UseInterceptors(ClassSerializerInterceptor)
+export class AuthController {
+  constructor(
+    private readonly authService: AuthService,
+    private readonly usersService: UsersService,
+  ) {}
+
+  @Post('register')
+  register(@Body() createUserDto: CreateUserDto): Promise<User> {
+    return this.usersService.create(createUserDto);
+  }
+
+  @UseGuards(LocalAuthGuard)
+  @Post('login')
+  login(
+    @AuthenticatedUser() user: User,
+    @Res({ passthrough: true }) response: Response,
+  ): User {
+    return this.authService.login(user, response);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  logout(@Res({ passthrough: true }) response: Response): { success: boolean } {
+    this.authService.logout(response);
+    return { success: true };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('me')
+  me(@AuthenticatedUser() user: User): User {
+    return user;
+  }
+}

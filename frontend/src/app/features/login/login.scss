@@ -1,0 +1,67 @@
+.login-wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: #0e1116;
+  color: #e6e6e6;
+}
+
+.card {
+  width: min(360px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 2rem;
+  background: #171b22;
+  border: 1px solid #262b34;
+  border-radius: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.sub {
+  margin: 0 0 0.5rem;
+  color: #8b93a1;
+  font-size: 0.9rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: #a9b1bd;
+}
+
+input {
+  padding: 0.6rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid #2c313b;
+  background: #0e1116;
+  color: #e6e6e6;
+}
+
+button {
+  margin-top: 0.5rem;
+  padding: 0.65rem;
+  border: 0;
+  border-radius: 8px;
+  background: #e10600;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.error {
+  margin: 0;
+  color: #ff6b6b;
+  font-size: 0.85rem;
+}

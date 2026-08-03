@@ -1,0 +1,61 @@
+:host {
+  display: block;
+  min-height: 100dvh;
+  background: #0e1116;
+  color: #e6e6e6;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: #171b22;
+  border-bottom: 1px solid #262b34;
+}
+
+.brand {
+  font-weight: 700;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.who {
+  color: #8b93a1;
+  font-size: 0.85rem;
+}
+
+.topbar button {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #2c313b;
+  border-radius: 8px;
+  background: transparent;
+  color: #e6e6e6;
+  cursor: pointer;
+}
+
+.content {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 900px;
+}
+
+.panel {
+  padding: 1.25rem;
+  background: #171b22;
+  border: 1px solid #262b34;
+  border-radius: 12px;
+}
+
+.panel.muted {
+  color: #8b93a1;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}

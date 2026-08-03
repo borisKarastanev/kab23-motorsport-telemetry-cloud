@@ -1,0 +1,16 @@
+/node_modules
+/dist
+/coverage
+*.log
+.env
+.env.local
+*.tsbuildinfo
+.DS_Store
+frontend/node_modules
+frontend/dist
+frontend/.angular
+
+# Local agent guidance — never committed.
+CLAUDE.md
+skills-lock.json
+.claude

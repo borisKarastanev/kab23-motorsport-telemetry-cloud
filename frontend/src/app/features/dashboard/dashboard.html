@@ -1,0 +1,29 @@
+<header class="topbar">
+  <span class="brand">Motorsport Telemetry</span>
+  <span class="spacer"></span>
+  @if (user(); as u) {
+    <span class="who">{{ u.displayName || u.email }} · {{ u.role }}</span>
+  }
+  <button (click)="logout()">Log out</button>
+</header>
+
+<main class="content">
+  <h1>Welcome{{ user()?.displayName ? ', ' + user()?.displayName : '' }}</h1>
+
+  @if (isManager()) {
+    <section class="panel">
+      <h2>Team Manager</h2>
+      <p>Live car tracking and real-time telemetry will appear here (Phase 3).</p>
+    </section>
+  } @else {
+    <section class="panel">
+      <h2>Driver</h2>
+      <p>Your session analysis — racing line, braking points, lap deltas — will appear here (Phase 4).</p>
+    </section>
+  }
+
+  <section class="panel muted">
+    <h3>Phase 0 scaffold</h3>
+    <p>Auth is wired end-to-end against the NestJS API. Domain and telemetry features land in later phases.</p>
+  </section>
+</main>

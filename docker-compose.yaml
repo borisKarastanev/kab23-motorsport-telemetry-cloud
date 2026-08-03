@@ -1,0 +1,82 @@
+services:
+  # Domain data + telemetry hypertables live in one Postgres engine via the
+  # TimescaleDB extension (see docs — one DB to run/back up).
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USERNAME}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_DATABASE}
+    ports:
+      - '${DB_PORT}:5432'
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    logging:
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  # Live pub/sub + last-known-value cache. Wired into code in Phase 3.
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - '${REDIS_PORT}:6379'
+
+  # Device telemetry ingress. Anonymous access for local dev only; Phase 5 adds
+  # per-car credentials / TLS.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: always
+    ports:
+      - '1883:1883'
+      - '9001:9001'
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - mosquitto_data:/mosquitto/data
+
+  api:
+    build:
+      context: .
+      dockerfile: ./apps/api/Dockerfile
+      target: development
+    command: pnpm run start:api
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=timescaledb
+      - REDIS_HOST=redis
+      - MQTT_URL=mqtt://mosquitto:1883
+    ports:
+      - '${PORT}:${PORT}'
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    depends_on:
+      - timescaledb
+      - redis
+
+  telemetry-ingest:
+    build:
+      context: .
+      dockerfile: ./apps/telemetry-ingest/Dockerfile
+      target: development
+    command: pnpm run start:ingest
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=timescaledb
+      - REDIS_HOST=redis
+      - MQTT_URL=mqtt://mosquitto:1883
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    depends_on:
+      - mosquitto
+      - timescaledb
+
+volumes:
+  timescale_data:
+  mosquitto_data:
