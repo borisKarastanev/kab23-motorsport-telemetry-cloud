@@ -3,6 +3,9 @@ import { DatabaseModule, LoggerModule } from '@app/common';
 import { ConfigModule } from '@app/common/config/config.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { TeamsModule } from './teams/teams.module';
+import { CarsModule } from './cars/cars.module';
+import { SessionsModule } from './sessions/sessions.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -12,6 +15,9 @@ import { HealthController } from './health/health.controller';
     DatabaseModule,
     AuthModule,
     UsersModule,
+    TeamsModule,
+    CarsModule,
+    SessionsModule,
   ],
   controllers: [HealthController],
 })
