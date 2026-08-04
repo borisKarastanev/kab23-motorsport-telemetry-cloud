@@ -20,6 +20,7 @@ import { CarsService } from './cars.service';
 import { Car } from './entities/car.entity';
 import { CreateCarDto } from './dto/create-car.dto';
 import { UpdateCarDto } from './dto/update-car.dto';
+import { MqttCredentialsDto } from './dto/mqtt-credentials.dto';
 
 @Controller('cars')
 @UseGuards(JwtAuthGuard)
@@ -55,6 +56,21 @@ export class CarsController {
     @Body() updateCarDto: UpdateCarDto,
   ): Promise<Car> {
     return this.carsService.update(user, id, updateCarDto);
+  }
+
+  /**
+   * Issues or rotates this car's broker credential.
+   *
+   * POST, not GET: it mints a new secret and invalidates the previous one, so
+   * it is neither safe nor idempotent. The password appears in this response
+   * and nowhere else — the platform keeps no copy to look up later.
+   */
+  @Post(':id/mqtt-credentials')
+  issueMqttCredentials(
+    @AuthenticatedUser() user: User,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<MqttCredentialsDto> {
+    return this.carsService.issueMqttCredentials(user, id);
   }
 
   @Delete(':id')

@@ -22,6 +22,13 @@ import { LoggerModule as PinoLoggerModule } from 'nestjs-pino';
             'res.headers["set-cookie"]',
             'req.body.password',
             'req.body.token',
+            // Broker credentials (MqttAdminService, car provisioning). The
+            // wildcards are defence in depth for any future log line that hands
+            // pino an object carrying one — the provisioning path itself never
+            // logs a command payload.
+            'req.body.mqttPassword',
+            '*.password',
+            '*.mqttPassword',
           ],
           remove: true,
         },

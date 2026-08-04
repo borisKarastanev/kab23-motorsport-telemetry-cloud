@@ -2,22 +2,28 @@ import { MANAGING_TEAM_ROLES, UserRole } from '@app/common';
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { TeamsService } from '../teams/teams.service';
 import { TeamMember } from '../teams/entities/team-member.entity';
 import { User } from '../users/entities/user.entity';
 import { CarsRepository } from './cars.repository';
+import { MqttAdminService } from './mqtt-admin.service';
 import { Car } from './entities/car.entity';
 import { CreateCarDto } from './dto/create-car.dto';
 import { UpdateCarDto } from './dto/update-car.dto';
+import { MqttCredentialsDto } from './dto/mqtt-credentials.dto';
 
 @Injectable()
 export class CarsService {
   constructor(
     private readonly carsRepository: CarsRepository,
     private readonly teamsService: TeamsService,
+    private readonly mqttAdminService: MqttAdminService,
   ) {}
+
+  private readonly logger = new Logger(CarsService.name);
 
   async create(user: User, createCarDto: CreateCarDto): Promise<Car> {
     const { teamId } = createCarDto;
@@ -30,9 +36,25 @@ export class CarsService {
       );
     }
 
-    return this.carsRepository.createCar(
+    const car = await this.carsRepository.createCar(
       new Car({ ...createCarDto, ownerId: user.id }),
     );
+
+    // Deliberately non-fatal, unlike rename and delete: a car created without
+    // its broker account cannot publish anything yet — no credential has been
+    // issued — so a broker outage here costs nothing but a retry, and
+    // `issueMqttCredentials` re-runs the same idempotent setup. Failing car
+    // creation outright would be a worse trade.
+    try {
+      await this.mqttAdminService.ensureCar(car.deviceId);
+    } catch {
+      this.logger.warn(
+        'Car created but its broker account could not be provisioned; ' +
+          'issuing credentials will retry',
+      );
+    }
+
+    return car;
   }
 
   async findAll(user: User): Promise<Car[]> {
@@ -83,12 +105,83 @@ export class CarsService {
       }
     }
 
-    return this.carsRepository.updateCar(carId, updateCarDto);
+    // A car's ACLs are built from its deviceId, so renaming it is a change of
+    // identity at the broker: the old account has to go and a new one take its
+    // place. The old credential dies with the old account either way, so the
+    // row must stop claiming the car is provisioned — including when a later
+    // step fails and the rename never lands. An operator who is told the car is
+    // still provisioned has no reason to re-issue, and the car silently never
+    // connects again.
+    const renamed =
+      'deviceId' in updateCarDto && updateCarDto.deviceId !== car.deviceId;
+
+    if (!renamed) {
+      return this.carsRepository.updateCar(carId, updateCarDto);
+    }
+
+    await this.mqttAdminService.removeCar(car.deviceId);
+
+    try {
+      await this.mqttAdminService.ensureCar(updateCarDto.deviceId);
+      return await this.carsRepository.updateCar(carId, {
+        ...updateCarDto,
+        mqttProvisionedAt: null,
+      });
+    } catch (error) {
+      // Reachable two ways: the broker went away between the calls, or the new
+      // deviceId collides with another car's (409 from the unique index).
+      await this.markUnprovisioned(carId);
+      throw error;
+    }
+  }
+
+  /**
+   * Best-effort: this runs while another failure is already propagating, so it
+   * must not replace that error with its own.
+   */
+  private async markUnprovisioned(carId: string): Promise<void> {
+    try {
+      await this.carsRepository.updateCar(carId, { mqttProvisionedAt: null });
+    } catch {
+      this.logger.warn(
+        'Could not record that a car lost its broker credential; it will ' +
+          'read as provisioned until credentials are issued again',
+      );
+    }
   }
 
   async remove(user: User, carId: string): Promise<void> {
-    await this.requireWritableCar(user, carId);
+    const car = await this.requireWritableCar(user, carId);
+
+    // Revoke first, and let a failure abort the delete. The alternative — a car
+    // row deleted while its broker account survives — is a device that still
+    // authenticates and still publishes, with nothing left in the platform to
+    // reveal it exists.
+    await this.mqttAdminService.removeCar(car.deviceId);
     await this.carsRepository.findOneAndDelete({ id: carId });
+  }
+
+  /**
+   * Issues (or rotates) the car's broker credential. The secret is returned to
+   * the caller once and stored nowhere — only the timestamp lands on the row.
+   *
+   * Write access, not read: handing out a credential is granting the ability to
+   * publish as this car, which is a manager/owner action rather than something
+   * every team driver can do.
+   */
+  async issueMqttCredentials(
+    user: User,
+    carId: string,
+  ): Promise<MqttCredentialsDto> {
+    const car = await this.requireWritableCar(user, carId);
+
+    const password = await this.mqttAdminService.issuePassword(car.deviceId);
+    const issuedAt = new Date();
+    await this.carsRepository.updateCar(carId, {
+      mqttProvisionedAt: issuedAt,
+    });
+
+    return { username: car.deviceId, password, issuedAt };
   }
 
   // ---------------------------------------------------------------------------

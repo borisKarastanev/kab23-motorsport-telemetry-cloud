@@ -5,6 +5,7 @@ import { TeamsModule } from '../teams/teams.module';
 import { SessionsController } from './sessions.controller';
 import { SessionsService } from './sessions.service';
 import { SessionsRepository } from './sessions.repository';
+import { TelemetryRepository } from './telemetry.repository';
 import { Session } from './entities/session.entity';
 
 @Module({
@@ -15,7 +16,7 @@ import { Session } from './entities/session.entity';
     TeamsModule,
   ],
   controllers: [SessionsController],
-  providers: [SessionsService, SessionsRepository],
+  providers: [SessionsService, SessionsRepository, TelemetryRepository],
   exports: [SessionsService],
 })
 export class SessionsModule {}
