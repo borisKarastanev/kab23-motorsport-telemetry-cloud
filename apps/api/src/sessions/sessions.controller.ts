@@ -22,6 +22,8 @@ import { Session } from './entities/session.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { QuerySessionsDto } from './dto/query-sessions.dto';
+import { QueryTelemetryDto } from './dto/query-telemetry.dto';
+import { TelemetryPointDto } from './dto/telemetry-point.dto';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard)
@@ -51,6 +53,19 @@ export class SessionsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<Session> {
     return this.sessionsService.findOne(user, id);
+  }
+
+  /**
+   * Downsampled telemetry for one session — the Phase 2 write path's proof of
+   * life, not the Phase 4 analysis API.
+   */
+  @Get(':id/telemetry')
+  getTelemetry(
+    @AuthenticatedUser() user: User,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: QueryTelemetryDto,
+  ): Promise<TelemetryPointDto[]> {
+    return this.sessionsService.getTelemetry(user, id, query);
   }
 
   @Patch(':id')

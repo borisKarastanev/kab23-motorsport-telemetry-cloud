@@ -70,6 +70,11 @@ services:
       - DB_HOST=timescaledb
       - REDIS_HOST=redis
       - MQTT_URL=mqtt://mosquitto:1883
+      # Blanked, not inherited: `env_file` would otherwise hand the broker's
+      # dynamic-security admin credential to a process that only ever
+      # subscribes, widening what an ingest compromise reaches for no benefit.
+      - MQTT_ADMIN_USERNAME=
+      - MQTT_ADMIN_PASSWORD=
     volumes:
       - .:/usr/src/app
       - /usr/src/app/node_modules

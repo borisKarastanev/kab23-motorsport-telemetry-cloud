@@ -40,4 +40,29 @@ export class Session extends AbstractEntity<Session> {
 
   @Column({ type: 'enum', enum: SessionStatus, default: SessionStatus.LIVE })
   status: SessionStatus;
+
+  /**
+   * The `sid` the device generated for this run — its idempotency key.
+   *
+   * A car spools telemetry locally when the LTE link drops and replays it on
+   * reconnect, possibly long after the run ended and possibly more than once.
+   * Unique, so a replayed backlog resolves back to this row instead of opening
+   * a second session, and a duplicated `start` event is a no-op.
+   *
+   * Null for sessions opened through the REST API rather than by a device.
+   */
+  @Column({ type: 'uuid', unique: true, nullable: true })
+  deviceSessionId?: string;
+
+  /**
+   * The device's monotonic clock reading at `startedAt`.
+   *
+   * A Pi 4 has no RTC, so a frame's wall-clock stamp is unreliable until NTP
+   * syncs over LTE. Sample time is instead `startedAt + (frame.mono -
+   * deviceMonoStartMs)`, which keeps one run's samples contiguous even if the
+   * device's clock steps mid-session. Storing it here is what lets ingest
+   * rebuild that anchor after a restart, when its in-memory registry is gone.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  deviceMonoStartMs?: number;
 }

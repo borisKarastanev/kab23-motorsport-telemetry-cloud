@@ -43,16 +43,23 @@ pnpm install
 # 2. env
 cp .env.example .env          # adjust secrets
 
-# 3. infra (Postgres+Timescale, Redis, Mosquitto)
+# 3. one-time broker bootstrap — MUST run before the first `docker compose up`.
+#    The broker rejects anonymous connections, and if it starts without a
+#    dynamic-security config it generates its own with a random admin password,
+#    which the API cannot authenticate against. If that already happened, pass
+#    --reset to rebuild the broker's accounts from .env.
+./scripts/init-mosquitto-dynsec.sh
+
+# 4. infra (Postgres+Timescale, Redis, Mosquitto)
 docker compose up -d timescaledb redis mosquitto
 
-# 4a. API  (http://localhost:3000)
+# 5a. API  (http://localhost:3000)
 pnpm run start:api
 
-# 4b. telemetry ingest (MQTT consumer)
+# 5b. telemetry ingest (MQTT consumer)
 pnpm run start:ingest
 
-# 5. frontend — Angular 22 (http://localhost:4200)
+# 6. frontend — Angular 22 (http://localhost:4200)
 cd frontend && pnpm install && pnpm start
 ```
 
@@ -75,17 +82,43 @@ curl -c cookies.txt -X POST localhost:3000/auth/login -H 'Content-Type: applicat
   -d '{"email":"you@team.com","password":"Passw0rd!"}'
 curl -b cookies.txt localhost:3000/auth/me
 
-# telemetry path — publish mock frames at 10 Hz and watch the ingest logs
-node scripts/mock-telemetry-publisher.js TEST123
+# telemetry path — register a car, issue its broker credential, then publish
+curl -b cookies.txt -X POST localhost:3000/cars -H 'Content-Type: application/json' \
+  -d '{"name":"E46","deviceId":"TEST123"}'
+curl -b cookies.txt -X POST localhost:3000/cars/<carId>/mqtt-credentials
+# → {"username":"TEST123","password":"…","issuedAt":"…"}   shown ONCE
+
+MQTT_DEVICE_PASSWORD=<that password> node scripts/mock-telemetry-publisher.js TEST123
+
+# read it back (downsampled, tenant-scoped)
+curl -b cookies.txt 'localhost:3000/sessions/<sessionId>/telemetry?maxPoints=500'
 ```
 
-## Status — Phase 0 (scaffold) complete
+Two flags on the publisher exercise the store-and-forward path without a real
+LTE link: `DROP_EVERY=30` simulates a 5 s outage every 30 s (frames spool, then
+replay on `cars/<deviceId>/backfill`), and `REPLAY_BACKFILL=1` sends every batch
+twice — the row count must not change, because the hypertable dedups on
+`(session_id, seq, time)`.
+
+## Device credentials
+
+The broker is not anonymous. Each car authenticates with its own credential and
+is confined by ACL to publishing on `cars/<its-deviceId>/…`; it can subscribe to
+nothing. Credentials are issued by `POST /cars/:id/mqtt-credentials` and shown
+**once** — the platform stores no copy, so a lost credential is rotated by
+calling the endpoint again. Changing a car's `deviceId` revokes the old one.
+
+## Status — Phases 0–2 complete
 
 - [x] NestJS monorepo (`api` monolith + `telemetry-ingest`) + `libs/common`
 - [x] Postgres/TimescaleDB, Redis, Mosquitto via docker-compose
 - [x] Cookie/JWT auth (register / login / me / logout), role-aware
-- [x] MQTT ingest shell receiving `cars/+/telemetry` and `cars/+/session`
+- [x] `teams`, `cars`, `sessions` + per-team RBAC (Phase 1)
+- [x] Per-car broker credentials and ACLs (Mosquitto dynamic security)
+- [x] `telemetry_samples` hypertable + batched, dedup-safe write path
+- [x] Device-driven sessions: the car opens and closes its own runs over MQTT
+- [x] Store-and-forward backfill replay
 - [x] Angular 22 auth shell (login → guarded dashboard, driver vs manager view)
 
-Next: **Phase 1** — teams/cars/sessions domain + RBAC; then Phase 2 telemetry
-persistence to Timescale hypertables.
+Next: **Phase 3** — Redis pub/sub + WebSocket gateway for the near-live
+team-manager view.

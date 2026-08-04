@@ -11,6 +11,7 @@ import { TeamsService } from '../teams/teams.service';
 import { User } from '../users/entities/user.entity';
 import { SessionsService } from './sessions.service';
 import { SessionsRepository } from './sessions.repository';
+import { TelemetryRepository } from './telemetry.repository';
 import { Session } from './entities/session.entity';
 
 const SESSION_ID = 'session-1';
@@ -36,6 +37,7 @@ describe('SessionsService', () => {
   let sessionsRepository: jest.Mocked<Partial<SessionsRepository>>;
   let carsService: jest.Mocked<Partial<CarsService>>;
   let teamsService: jest.Mocked<Partial<TeamsService>>;
+  let telemetryRepository: jest.Mocked<Partial<TelemetryRepository>>;
 
   beforeEach(async () => {
     sessionsRepository = {
@@ -56,6 +58,9 @@ describe('SessionsService', () => {
       requireTeamRole: jest.fn(),
       getMembership: jest.fn().mockResolvedValue(null),
     };
+    telemetryRepository = {
+      findDownsampled: jest.fn().mockResolvedValue([]),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -63,6 +68,7 @@ describe('SessionsService', () => {
         { provide: SessionsRepository, useValue: sessionsRepository },
         { provide: CarsService, useValue: carsService },
         { provide: TeamsService, useValue: teamsService },
+        { provide: TelemetryRepository, useValue: telemetryRepository },
       ],
     }).compile();
 
@@ -264,6 +270,47 @@ describe('SessionsService', () => {
       await expect(
         service.close(asUser('teammate'), SESSION_ID),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('getTelemetry', () => {
+    it('defaults the window to the session, ending now while it is live', async () => {
+      sessionsRepository.findOne.mockResolvedValue(session());
+      const before = Date.now();
+
+      await service.getTelemetry(asUser('driver'), SESSION_ID, {});
+
+      const [sessionId, from, to, maxPoints] =
+        telemetryRepository.findDownsampled.mock.calls[0];
+      expect(sessionId).toBe(SESSION_ID);
+      expect(from).toEqual(new Date('2026-08-01T10:00:00Z'));
+      expect(to.getTime()).toBeGreaterThanOrEqual(before);
+      expect(maxPoints).toBe(2000);
+    });
+
+    it('ends the window at endedAt once the session is closed', async () => {
+      const endedAt = new Date('2026-08-01T10:40:00Z');
+      sessionsRepository.findOne.mockResolvedValue(
+        session({ status: SessionStatus.COMPLETED, endedAt }),
+      );
+
+      await service.getTelemetry(asUser('driver'), SESSION_ID, {});
+
+      expect(telemetryRepository.findDownsampled.mock.calls[0][2]).toEqual(
+        endedAt,
+      );
+    });
+
+    it('404s an outsider rather than returning a driver GPS trace', async () => {
+      // Same scoping as every other session read — there is no route to
+      // telemetry that skips requireReadableSession.
+      sessionsRepository.findOne.mockResolvedValue(session());
+      carsService.requireReadableCar.mockRejectedValue(new NotFoundException());
+
+      await expect(
+        service.getTelemetry(asUser('outsider'), SESSION_ID, {}),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(telemetryRepository.findDownsampled).not.toHaveBeenCalled();
     });
   });
 });

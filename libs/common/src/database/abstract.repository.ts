@@ -2,15 +2,13 @@ import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { EntityManager, FindOptionsWhere, Repository } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { AbstractEntity } from './abstract.entity';
+import { UNIQUE_VIOLATION } from './postgres-errors';
 
 /**
  * Log which fields were searched on, never their values — lookup criteria carry
  * PII (emails, user ids, device ids) that must not land in a log sink.
  */
 const criteriaKeys = (where: object): string => Object.keys(where).join(', ');
-
-/** Postgres `unique_violation`. */
-const UNIQUE_VIOLATION = '23505';
 
 export abstract class AbstractRepository<T extends AbstractEntity<T>> {
   protected abstract readonly logger: Logger;

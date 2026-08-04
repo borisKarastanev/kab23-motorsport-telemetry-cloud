@@ -41,6 +41,12 @@ jobs:
           DB_PASSWORD: test
           DB_DATABASE: test
           JWT_SECRET: test-jwt-secret-not-for-production
+          # The broker rejects anonymous connections from Phase 2 on, so these
+          # became required in config.schema.ts. No broker is reached here.
+          MQTT_USERNAME: test
+          MQTT_PASSWORD: test-mqtt-not-for-production
+          MQTT_ADMIN_USERNAME: test-admin
+          MQTT_ADMIN_PASSWORD: test-mqtt-admin-not-for-production
 
       - name: Build
         run: pnpm run build

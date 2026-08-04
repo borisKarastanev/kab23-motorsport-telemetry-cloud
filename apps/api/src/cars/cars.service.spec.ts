@@ -1,10 +1,16 @@
 import { TeamRole, UserRole } from '@app/common';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { TeamsService } from '../teams/teams.service';
 import { User } from '../users/entities/user.entity';
 import { CarsService } from './cars.service';
 import { CarsRepository } from './cars.repository';
+import { MqttAdminService } from './mqtt-admin.service';
 import { Car } from './entities/car.entity';
 
 const CAR_ID = 'car-1';
@@ -26,6 +32,7 @@ describe('CarsService', () => {
   let service: CarsService;
   let carsRepository: jest.Mocked<Partial<CarsRepository>>;
   let teamsService: jest.Mocked<Partial<TeamsService>>;
+  let mqttAdminService: jest.Mocked<Partial<MqttAdminService>>;
 
   beforeEach(async () => {
     carsRepository = {
@@ -36,11 +43,17 @@ describe('CarsService', () => {
       findVisibleIds: jest.fn().mockResolvedValue([]),
       findAllIds: jest.fn().mockResolvedValue([]),
       updateCar: jest.fn(),
+      findOneAndDelete: jest.fn(),
     };
     teamsService = {
       requireTeamRole: jest.fn(),
       getMembership: jest.fn().mockResolvedValue(null),
       getUserTeamIds: jest.fn().mockResolvedValue([]),
+    };
+    mqttAdminService = {
+      ensureCar: jest.fn(),
+      issuePassword: jest.fn().mockResolvedValue('broker-secret'),
+      removeCar: jest.fn(),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -48,6 +61,7 @@ describe('CarsService', () => {
         CarsService,
         { provide: CarsRepository, useValue: carsRepository },
         { provide: TeamsService, useValue: teamsService },
+        { provide: MqttAdminService, useValue: mqttAdminService },
       ],
     }).compile();
 
@@ -192,6 +206,159 @@ describe('CarsService', () => {
 
       expect(teamsService.requireTeamRole).not.toHaveBeenCalled();
       expect(carsRepository.updateCar).toHaveBeenCalled();
+    });
+  });
+
+  describe('broker provisioning', () => {
+    it('provisions a broker account when a car is created', async () => {
+      carsRepository.createCar.mockResolvedValue(car());
+
+      await service.create(asUser('user-1'), {
+        name: 'E46',
+        deviceId: 'TEST123',
+      });
+
+      expect(mqttAdminService.ensureCar).toHaveBeenCalledWith('TEST123');
+    });
+
+    it('still creates the car when the broker is unreachable', async () => {
+      // Nothing can publish yet — no credential has been issued — so a broker
+      // outage here costs a retry, not a failed creation.
+      carsRepository.createCar.mockResolvedValue(car());
+      mqttAdminService.ensureCar.mockRejectedValue(
+        new ServiceUnavailableException(),
+      );
+
+      await expect(
+        service.create(asUser('user-1'), { name: 'E46', deviceId: 'TEST123' }),
+      ).resolves.toMatchObject({ id: CAR_ID });
+    });
+
+    it('revokes the old broker account when the deviceId changes', async () => {
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+
+      await service.update(asUser('owner'), CAR_ID, { deviceId: 'NEW456' });
+
+      expect(mqttAdminService.removeCar).toHaveBeenCalledWith('TEST123');
+      expect(mqttAdminService.ensureCar).toHaveBeenCalledWith('NEW456');
+      // The old secret died with the old account, so the car is unprovisioned
+      // until its owner issues a new one.
+      expect(carsRepository.updateCar).toHaveBeenCalledWith(CAR_ID, {
+        deviceId: 'NEW456',
+        mqttProvisionedAt: null,
+      });
+    });
+
+    it('does not touch the broker when the deviceId is unchanged', async () => {
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+
+      await service.update(asUser('owner'), CAR_ID, { deviceId: 'TEST123' });
+
+      expect(mqttAdminService.removeCar).not.toHaveBeenCalled();
+      expect(carsRepository.updateCar).toHaveBeenCalledWith(CAR_ID, {
+        deviceId: 'TEST123',
+      });
+    });
+
+    it('aborts a rename the broker could not even start', async () => {
+      // Nothing has been revoked yet, so the car is untouched.
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+      mqttAdminService.removeCar.mockRejectedValue(
+        new ServiceUnavailableException(),
+      );
+
+      await expect(
+        service.update(asUser('owner'), CAR_ID, { deviceId: 'NEW456' }),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(carsRepository.updateCar).not.toHaveBeenCalled();
+    });
+
+    it('marks the car unprovisioned when a rename fails after revoking', async () => {
+      // The old account is already gone, so the row must not keep claiming the
+      // car is provisioned — an operator told otherwise has no reason to
+      // re-issue, and the car silently never connects again.
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+      mqttAdminService.ensureCar.mockRejectedValue(
+        new ServiceUnavailableException(),
+      );
+
+      await expect(
+        service.update(asUser('owner'), CAR_ID, { deviceId: 'NEW456' }),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(carsRepository.updateCar).toHaveBeenCalledWith(CAR_ID, {
+        mqttProvisionedAt: null,
+      });
+    });
+
+    it('marks the car unprovisioned when the new deviceId collides', async () => {
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+      carsRepository.updateCar.mockRejectedValueOnce(
+        new ConflictException('Car could not be saved'),
+      );
+
+      await expect(
+        service.update(asUser('owner'), CAR_ID, { deviceId: 'TAKEN' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(carsRepository.updateCar).toHaveBeenLastCalledWith(CAR_ID, {
+        mqttProvisionedAt: null,
+      });
+    });
+
+    it('revokes broker access before deleting the car', async () => {
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+
+      await service.remove(asUser('owner'), CAR_ID);
+
+      expect(mqttAdminService.removeCar).toHaveBeenCalledWith('TEST123');
+      expect(carsRepository.findOneAndDelete).toHaveBeenCalledWith({
+        id: CAR_ID,
+      });
+    });
+
+    it('refuses to delete a car whose broker access it cannot revoke', async () => {
+      // A deleted row with a live broker account is a device that still
+      // publishes, with nothing left in the platform to show it exists.
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+      mqttAdminService.removeCar.mockRejectedValue(
+        new ServiceUnavailableException(),
+      );
+
+      await expect(
+        service.remove(asUser('owner'), CAR_ID),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(carsRepository.findOneAndDelete).not.toHaveBeenCalled();
+    });
+
+    it('returns the secret once and records only the timestamp', async () => {
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+
+      const credentials = await service.issueMqttCredentials(
+        asUser('owner'),
+        CAR_ID,
+      );
+
+      expect(credentials).toMatchObject({
+        username: 'TEST123',
+        password: 'broker-secret',
+      });
+      // Whatever is persisted must not contain the secret in any form.
+      const [, patch] = carsRepository.updateCar.mock.calls[0];
+      expect(Object.keys(patch)).toEqual(['mqttProvisionedAt']);
+      expect(JSON.stringify(patch)).not.toContain('broker-secret');
+    });
+
+    it('refuses to issue credentials to a team driver', async () => {
+      // Handing out a credential grants the ability to publish as this car, so
+      // it is an owner/manager action rather than something every driver can do.
+      carsRepository.findOne.mockResolvedValue(car({ teamId: TEAM_ID }));
+      teamsService.getMembership.mockResolvedValue({
+        role: TeamRole.DRIVER,
+      } as never);
+
+      await expect(
+        service.issueMqttCredentials(asUser('teammate'), CAR_ID),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(mqttAdminService.issuePassword).not.toHaveBeenCalled();
     });
   });
 

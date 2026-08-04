@@ -26,6 +26,20 @@ export class Car extends AbstractEntity<Car> {
   @Column({ unique: true })
   deviceId: string;
 
+  /**
+   * When a broker credential was last issued for this car — never the secret
+   * itself, nor a hash of it. The plaintext exists exactly once, in the
+   * response to `POST /cars/:id/mqtt-credentials`; the broker keeps the only
+   * durable copy (its own hash). A car that loses its credential rotates,
+   * because there is nothing here to look it up from.
+   *
+   * Null means the device cannot connect: either never provisioned, or its
+   * `deviceId` was changed, which revokes the old credential along with the old
+   * ACLs.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  mqttProvisionedAt?: Date;
+
   @Column()
   ownerId: string;
 

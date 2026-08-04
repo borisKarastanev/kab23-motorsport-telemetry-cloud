@@ -13,6 +13,12 @@ import { Session } from './entities/session.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { QuerySessionsDto } from './dto/query-sessions.dto';
+import {
+  DEFAULT_MAX_POINTS,
+  QueryTelemetryDto,
+} from './dto/query-telemetry.dto';
+import { TelemetryRepository } from './telemetry.repository';
+import { TelemetryPointDto } from './dto/telemetry-point.dto';
 
 @Injectable()
 export class SessionsService {
@@ -20,6 +26,7 @@ export class SessionsService {
     private readonly sessionsRepository: SessionsRepository,
     private readonly carsService: CarsService,
     private readonly teamsService: TeamsService,
+    private readonly telemetryRepository: TelemetryRepository,
   ) {}
 
   async create(
@@ -149,6 +156,37 @@ export class SessionsService {
   async remove(user: User, sessionId: string): Promise<void> {
     await this.requireWritableSession(user, sessionId);
     await this.sessionsRepository.findOneAndDelete({ id: sessionId });
+  }
+
+  /**
+   * Downsampled telemetry for one session.
+   *
+   * Deliberately minimal — this exists so the Phase 2 write path is verifiable
+   * without reading SQL by hand. The analysis API (lap deltas, sector times,
+   * racing line) is Phase 4 and will not be built on this shape.
+   *
+   * Scoped through the same `requireReadableSession` as every other session
+   * read, so a session outside the caller's tenant 404s here exactly as it does
+   * elsewhere. GPS traces are a named driver's location: there is no route to
+   * this data that skips that check.
+   */
+  async getTelemetry(
+    user: User,
+    sessionId: string,
+    query: QueryTelemetryDto,
+  ): Promise<TelemetryPointDto[]> {
+    const session = await this.requireReadableSession(user, sessionId);
+
+    // A session with no explicit end is still running, so "now" is its edge.
+    const from = query.from ? new Date(query.from) : session.startedAt;
+    const to = query.to ? new Date(query.to) : (session.endedAt ?? new Date());
+
+    return this.telemetryRepository.findDownsampled(
+      sessionId,
+      from,
+      to,
+      query.maxPoints ?? DEFAULT_MAX_POINTS,
+    );
   }
 
   // ---------------------------------------------------------------------------

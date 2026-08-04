@@ -15,6 +15,10 @@ async function bootstrap() {
   // Angular dev server talks to us cross-origin with the auth cookie.
   app.enableCors({ origin: true, credentials: true });
 
+  // Without this Nest never calls onApplicationShutdown, so MqttAdminService
+  // would leave its broker connection open on every SIGTERM.
+  app.enableShutdownHooks();
+
   const configService = app.get(ConfigService);
   await app.listen(configService.get<number>('PORT') ?? 3000);
 }
