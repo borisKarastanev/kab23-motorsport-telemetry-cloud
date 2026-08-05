@@ -29,6 +29,12 @@
  *                   each format can and cannot reproduce.
  *   --seed <n>      PRNG seed for the circuit's per-lap variation (default
  *                   20260805). Same seed, same laps.
+ *   --lap-m <n>     lap length in metres (default 2100, a plausible club
+ *                   circuit). The shape is scaled but still fitted to the same
+ *                   real gate, so it crosses correctly at any size — 600 m
+ *                   gives ~30 s laps at 44–133 km/h, which is what makes an
+ *                   end-to-end lap-derivation check take two minutes instead
+ *                   of four and a half.
  *
  * Options (env):
  *   DROP_EVERY=30   simulate a 5 s link outage every 30 s: frames are spooled
@@ -51,12 +57,15 @@ const argv = process.argv.slice(2);
 const positional = [];
 let replayFile = null;
 let seed = 20260805;
+let targetLapM;
 
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--replay') {
     replayFile = argv[++i];
   } else if (argv[i] === '--seed') {
     seed = Number(argv[++i]);
+  } else if (argv[i] === '--lap-m') {
+    targetLapM = Number(argv[++i]);
   } else {
     positional.push(argv[i]);
   }
@@ -90,7 +99,7 @@ let source;
 try {
   source = replayFile
     ? loadReplaySource(replayFile)
-    : new CircuitDriver({ seed, gpsNoiseM });
+    : new CircuitDriver({ seed, gpsNoiseM, ...(targetLapM ? { targetLapM } : {}) });
 } catch (error) {
   console.error(`[mock] ${error.message}`);
   process.exit(1);

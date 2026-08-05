@@ -131,6 +131,10 @@ with no gate and with channels unrelated to the path.
 
 ```bash
 --seed <n>        per-lap pace variation (default 20260805). Same seed, same laps.
+--lap-m <n>       lap length in metres (default 2100). The shape scales but stays
+                  fitted to the same real gate, so it crosses correctly at any
+                  size; 600 m gives ~30 s laps, which is what makes an end-to-end
+                  lap-derivation check take two minutes rather than four and a half.
 GPS_NOISE_M=0.7   GPS jitter, 1σ per axis. Non-zero by default, so the
                   segmenter's crossing debounce is genuinely exercised.
 --replay <file>   replay a recorded drive instead: a JSONL frame log, or a dash
