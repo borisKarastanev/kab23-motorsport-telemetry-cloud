@@ -94,7 +94,19 @@ MQTT_DEVICE_PASSWORD=<that password> node scripts/mock-telemetry-publisher.js TE
 
 # read it back (downsampled, tenant-scoped)
 curl -b cookies.txt 'localhost:3000/sessions/<sessionId>/telemetry?maxPoints=500'
+
+# post-session analysis — laps derive on the first read of a closed session
+curl -b cookies.txt localhost:3000/sessions/<sessionId>/laps
+curl -b cookies.txt -X POST localhost:3000/sessions/<sessionId>/analyze   # force a recompute
+curl -b cookies.txt 'localhost:3000/sessions/<sessionId>/laps/1/trace?maxPoints=500'
+curl -b cookies.txt 'localhost:3000/sessions/<sessionId>/compare?laps=1,2'
 ```
+
+`GET /laps` answers `{"laps":[], "reason":"…"}` rather than an error when there
+is nothing to derive: `session-live` (still running), `no-track-gate`
+(`Session.track` matched no row in `tracks`, so there is no start/finish line to
+cut on), `no-samples`, `no-crossings` (the car never crossed the line) or
+`too-many-samples`. None of those are failures, and the reason says which it is.
 
 Two env flags on the publisher exercise the store-and-forward path without a
 real LTE link: `DROP_EVERY=30` simulates a 5 s outage every 30 s (frames spool,

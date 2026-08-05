@@ -189,12 +189,39 @@ export class SessionsService {
     );
   }
 
+  /**
+   * Stamp — or clear — the moment the lap derivation last ran.
+   *
+   * Exposed for `AnalysisService`, which owns when that happens. Unauthorized
+   * on purpose: it is only ever reached through a session the caller has
+   * already been scoped to, and adding a check here would be a second predicate
+   * to keep in step with `requireReadableSession` rather than a second defence.
+   */
+  async setAnalyzedAt(
+    sessionId: string,
+    analyzedAt: Date | null,
+  ): Promise<void> {
+    await this.sessionsRepository.findOneAndUpdate(
+      { id: sessionId },
+      {
+        analyzedAt,
+      },
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Scoping
   // ---------------------------------------------------------------------------
 
-  /** The driver's own run, or any session on a car the caller can see. */
-  private async requireReadableSession(
+  /**
+   * The driver's own run, or any session on a car the caller can see.
+   *
+   * Public because `AnalysisService` is a second module reading this session's
+   * data, and it must go through *this* check rather than write its own. GPS
+   * traces are a named driver's location: a second, independently maintained
+   * scoping predicate is a second chance to get one wrong.
+   */
+  async requireReadableSession(
     user: User,
     sessionId: string,
   ): Promise<Session> {
