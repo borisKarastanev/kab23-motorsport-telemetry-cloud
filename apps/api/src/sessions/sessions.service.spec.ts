@@ -12,6 +12,7 @@ import { User } from '../users/entities/user.entity';
 import { SessionsService } from './sessions.service';
 import { SessionsRepository } from './sessions.repository';
 import { TelemetryRepository } from './telemetry.repository';
+import { LapSummaryRepository } from './lap-summary.repository';
 import { Session } from './entities/session.entity';
 
 const SESSION_ID = 'session-1';
@@ -38,6 +39,7 @@ describe('SessionsService', () => {
   let carsService: jest.Mocked<Partial<CarsService>>;
   let teamsService: jest.Mocked<Partial<TeamsService>>;
   let telemetryRepository: jest.Mocked<Partial<TelemetryRepository>>;
+  let lapSummaryRepository: jest.Mocked<Partial<LapSummaryRepository>>;
 
   beforeEach(async () => {
     sessionsRepository = {
@@ -61,6 +63,9 @@ describe('SessionsService', () => {
     telemetryRepository = {
       findDownsampled: jest.fn().mockResolvedValue([]),
     };
+    lapSummaryRepository = {
+      findBySessions: jest.fn().mockResolvedValue(new Map()),
+    };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -69,6 +74,7 @@ describe('SessionsService', () => {
         { provide: CarsService, useValue: carsService },
         { provide: TeamsService, useValue: teamsService },
         { provide: TelemetryRepository, useValue: telemetryRepository },
+        { provide: LapSummaryRepository, useValue: lapSummaryRepository },
       ],
     }).compile();
 
@@ -180,6 +186,57 @@ describe('SessionsService', () => {
       await expect(
         service.findOne(asUser('outsider'), SESSION_ID),
       ).rejects.toThrow('Session not found');
+    });
+  });
+
+  describe('findAll lap summary', () => {
+    beforeEach(() => {
+      sessionsRepository.findVisible.mockResolvedValue([
+        session({ id: 'analyzed' }),
+        session({ id: 'untouched' }),
+      ]);
+      carsService.getVisibleCarIds.mockResolvedValue([CAR_ID]);
+      lapSummaryRepository.findBySessions.mockResolvedValue(
+        new Map([
+          [
+            'analyzed',
+            { sessionId: 'analyzed', lapCount: 4, bestLapMs: 63373 },
+          ],
+        ]),
+      );
+    });
+
+    it('attaches each session lap count and best lap', async () => {
+      const [analyzed] = await service.findAll(asUser('driver'), {});
+
+      expect(analyzed).toMatchObject({ lapCount: 4, bestLapMs: 63373 });
+    });
+
+    it('reports a session nobody has analyzed as having no laps', async () => {
+      // Not a gap to paper over: derivation is lazy, so "no laps" and "not
+      // analyzed yet" are the same state and the list must not invent a number.
+      const [, untouched] = await service.findAll(asUser('driver'), {});
+
+      expect(untouched).toMatchObject({ lapCount: 0, bestLapMs: null });
+    });
+
+    it('rolls the whole page up in one query rather than one per session', async () => {
+      await service.findAll(asUser('driver'), {});
+
+      expect(lapSummaryRepository.findBySessions).toHaveBeenCalledTimes(1);
+      expect(lapSummaryRepository.findBySessions).toHaveBeenCalledWith([
+        'analyzed',
+        'untouched',
+      ]);
+    });
+
+    it('only ever asks about sessions the caller was already scoped to', async () => {
+      // The summary repository does no authorization of its own, so the ids
+      // handed to it are the whole of its protection.
+      await service.findAll(asUser('driver'), {});
+
+      const [ids] = lapSummaryRepository.findBySessions.mock.calls[0];
+      expect(ids).toEqual(['analyzed', 'untouched']);
     });
   });
 

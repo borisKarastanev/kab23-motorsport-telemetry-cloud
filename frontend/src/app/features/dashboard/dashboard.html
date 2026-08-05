@@ -16,15 +16,14 @@
       <p>Watch a car's telemetry as it runs — position, gauges and lap timing.</p>
       <a class="cta" routerLink="/live">Open live view</a>
     </section>
-  } @else {
-    <section class="panel">
-      <h2>Driver</h2>
-      <p>Your session analysis — racing line, braking points, lap deltas — will appear here (Phase 4).</p>
-    </section>
   }
 
-  <section class="panel muted">
-    <h3>Phase 0 scaffold</h3>
-    <p>Auth is wired end-to-end against the NestJS API. Domain and telemetry features land in later phases.</p>
+  <section class="panel">
+    <h2>Session analysis</h2>
+    <p>
+      Racing line, braking points, sector times and lap-vs-lap deltas from your
+      completed sessions.
+    </p>
+    <a class="cta" routerLink="/sessions">Browse sessions</a>
   </section>
 </main>

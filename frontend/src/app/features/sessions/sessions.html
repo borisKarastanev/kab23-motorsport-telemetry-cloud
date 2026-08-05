@@ -1,0 +1,64 @@
+<header class="topbar">
+  <a class="brand" routerLink="/">Motorsport Telemetry</a>
+  <span class="spacer"></span>
+  <a class="back" routerLink="/live">Live view →</a>
+</header>
+
+<main class="content">
+  <h1>Sessions</h1>
+
+  @if (loading()) {
+    <p class="muted">Loading…</p>
+  } @else if (error()) {
+    <p class="error">Could not load sessions.</p>
+  } @else if (rows().length === 0) {
+    <section class="panel empty">
+      <p>No sessions yet.</p>
+      <p class="muted">
+        A session opens when a car publishes a <code>start</code> event, and
+        closes when it publishes <code>stop</code>.
+      </p>
+    </section>
+  } @else {
+    <section class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Started</th>
+            <th scope="col">Track</th>
+            <th scope="col">Car</th>
+            <th scope="col">Length</th>
+            <th scope="col">Laps</th>
+            <th scope="col">Best lap</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track row.id) {
+            <tr>
+              <td>
+                @if (row.analysable) {
+                  <a [routerLink]="['/sessions', row.id]">
+                    {{ row.started | date: 'd MMM y, HH:mm' }}
+                  </a>
+                } @else {
+                  <span>{{ row.started | date: 'd MMM y, HH:mm' }}</span>
+                }
+              </td>
+              <td>{{ row.track }}</td>
+              <td>{{ row.car }}</td>
+              <td class="num">{{ row.length }}</td>
+              <td class="num">{{ row.laps }}</td>
+              <td class="num">{{ row.best }}</td>
+              <td>
+                <span class="pill" [class.live]="!row.analysable">
+                  {{ row.status }}
+                </span>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+  }
+</main>
