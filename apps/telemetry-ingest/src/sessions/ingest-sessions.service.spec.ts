@@ -146,7 +146,21 @@ describe('IngestSessionsService', () => {
     it('treats a repeated stop as a no-op, not an error', async () => {
       sessions.update.mockResolvedValue({ affected: 0 });
 
-      await expect(service.closeSession(CAR_ID, SID)).resolves.toBeUndefined();
+      // Null rather than a session: nothing was closed, so there is nothing for
+      // the caller to announce on the live bus a second time.
+      await expect(service.closeSession(CAR_ID, SID)).resolves.toBeNull();
+    });
+
+    it('returns the closed session so the caller can announce it', async () => {
+      sessions.update.mockResolvedValue({ affected: 1 });
+      sessions.findOne.mockResolvedValue({
+        id: SESSION_ID,
+        carId: CAR_ID,
+      } as SessionRef);
+
+      await expect(service.closeSession(CAR_ID, SID)).resolves.toEqual(
+        expect.objectContaining({ id: SESSION_ID }),
+      );
     });
   });
 });

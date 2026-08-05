@@ -18,15 +18,33 @@ services:
         max-size: 10m
         max-file: '3'
 
-  # Live pub/sub + last-known-value cache. Wired into code in Phase 3.
+  # Live pub/sub fan-out + last-known-value cache. Not durable storage: every
+  # value here is reconstructible from the hypertable.
+  #
+  # `lkv:car:*` holds a named driver's current GPS fix and `live:car:*` carries
+  # the same over pub/sub, so the port is bound to the loopback interface only.
+  # Published on 0.0.0.0 it would let anyone routable to this host PSUBSCRIBE
+  # another team's telemetry with no credential. The mapping exists at all so
+  # api/ingest can run on the host against compose infra.
   redis:
     image: redis:7-alpine
     restart: always
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    # Applied only when set. Without this the server ignores REDIS_PASSWORD
+    # while ioredis still sends AUTH, and Redis answers "Client sent AUTH, but
+    # no password is set" on every reconnect — both apps boot and look healthy
+    # with the entire live path silently dead.
+    command: >
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ];
+             then exec redis-server --requirepass "$$REDIS_PASSWORD";
+             else exec redis-server; fi'
     ports:
-      - '${REDIS_PORT}:6379'
+      - '127.0.0.1:${REDIS_PORT}:6379'
 
-  # Device telemetry ingress. Anonymous access for local dev only; Phase 5 adds
-  # per-car credentials / TLS.
+  # Device telemetry ingress. Anonymous access is refused: clients, roles and
+  # ACLs are managed at runtime through the dynamic-security plugin, so run
+  # scripts/init-mosquitto-dynsec.sh once before the first `up`. TLS is Phase 5.
   mosquitto:
     image: eclipse-mosquitto:2
     restart: always

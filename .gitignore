@@ -13,6 +13,7 @@ frontend/.angular
 # Local developer scratch — talks to a live broker and database, and creates
 # and deletes accounts. Not part of the repo's test suite.
 local_smoke_test.sh
+local_live_smoke_test.js
 
 # Local agent guidance — never committed.
 CLAUDE.md

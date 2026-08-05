@@ -1,8 +1,8 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
-import { environment } from '../../environments/environment';
-import { User } from './user.model';
+import { environment } from '../../../environments/environment';
+import { User } from '../models/user.model';
 
 interface Credentials {
   email: string;

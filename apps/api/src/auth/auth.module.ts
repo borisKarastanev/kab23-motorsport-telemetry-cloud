@@ -28,5 +28,11 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   ],
   controllers: [AuthController],
   providers: [AuthService, LocalStrategy, JwtStrategy],
+  // The live gateway verifies the same cookie outside the HTTP request cycle,
+  // where guards do not run. It goes through `AuthService.userFromToken` rather
+  // than being handed `JwtModule` to verify with itself: the token's shape, the
+  // cookie it arrives in and how it resolves to a user are all this module's,
+  // and exporting the signer would hand every importer the ability to mint one.
+  exports: [AuthService],
 })
 export class AuthModule {}

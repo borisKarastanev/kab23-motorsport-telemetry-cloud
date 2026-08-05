@@ -6,6 +6,7 @@ import {
 } from './device-registry.service';
 import { TelemetryService } from './telemetry.service';
 import { TelemetryWriterService } from './telemetry-writer.service';
+import { LivePublisherService } from './live-publisher.service';
 import { TelemetrySample } from './entities/telemetry-sample.entity';
 
 const DEVICE_ID = 'TEST123';
@@ -42,6 +43,7 @@ describe('TelemetryService', () => {
   let registry: jest.Mocked<Partial<DeviceRegistryService>>;
   let sessions: jest.Mocked<Partial<IngestSessionsService>>;
   let writer: jest.Mocked<Partial<TelemetryWriterService>>;
+  let live: jest.Mocked<Partial<LivePublisherService>>;
 
   const written = (): TelemetrySample[] =>
     writer.enqueue.mock.calls.map(([sample]) => sample);
@@ -52,13 +54,17 @@ describe('TelemetryService', () => {
       forget: jest.fn(),
     };
     sessions = {
-      closeSession: jest.fn(),
+      closeSession: jest.fn().mockResolvedValue({ id: SESSION_ID } as never),
       findCarByDeviceId: jest.fn().mockResolvedValue({ id: CAR_ID } as never),
     };
     writer = {
       enqueue: jest.fn(),
       enqueueAll: jest.fn(),
       flush: jest.fn().mockResolvedValue(undefined),
+    };
+    live = {
+      publishFrame: jest.fn(),
+      publishEvent: jest.fn().mockResolvedValue(undefined),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -67,6 +73,7 @@ describe('TelemetryService', () => {
         { provide: DeviceRegistryService, useValue: registry },
         { provide: IngestSessionsService, useValue: sessions },
         { provide: TelemetryWriterService, useValue: writer },
+        { provide: LivePublisherService, useValue: live },
       ],
     }).compile();
 
@@ -95,6 +102,74 @@ describe('TelemetryService', () => {
 
       const [first, second] = written();
       expect(second.time.getTime() - first.time.getTime()).toBe(1_000);
+    });
+  });
+
+  describe('live path', () => {
+    it('publishes a frame before it is queued for the database', async () => {
+      // The whole latency argument rests on this order: the writer buffers for
+      // up to 250 ms, so a viewer that waited on it would spend a quarter of
+      // the glass-to-glass budget on a batch it does not need.
+      await service.handleFrame(DEVICE_ID, frame());
+
+      expect(live.publishFrame.mock.invocationCallOrder[0]).toBeLessThan(
+        writer.enqueue.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('publishes the same object it stores', async () => {
+      // Two independent mappings would let the live view and the stored row
+      // disagree about what the car was doing.
+      await service.handleFrame(DEVICE_ID, frame());
+
+      expect(live.publishFrame.mock.calls[0][0]).toBe(written()[0]);
+    });
+
+    it('never publishes a replayed backfill batch', async () => {
+      // A drained backlog is history. Pushing it at a viewer would rewind the
+      // map and show the car somewhere it no longer is.
+      await service.handleBackfill(DEVICE_ID, {
+        v: 1,
+        sid: SID,
+        frames: [frame({ seq: 1 }), frame({ seq: 2, mono: 1_100 })],
+      });
+
+      expect(writer.enqueueAll).toHaveBeenCalled();
+      expect(live.publishFrame).not.toHaveBeenCalled();
+    });
+
+    it('announces a stop only after the buffered samples are flushed', async () => {
+      // Otherwise a viewer stops reading, then finds the stored session longer
+      // than the one they watched.
+      await service.handleSessionEvent(DEVICE_ID, {
+        v: 1,
+        sid: SID,
+        event: 'stop',
+        mono: 900_000,
+      });
+
+      expect(live.publishEvent).toHaveBeenCalledWith(
+        CAR_ID,
+        SESSION_ID,
+        'stop',
+      );
+      expect(writer.flush.mock.invocationCallOrder[0]).toBeLessThan(
+        live.publishEvent.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('announces nothing when a stop closed no session', async () => {
+      // A retransmitted stop must not end the run a second time.
+      sessions.closeSession.mockResolvedValue(null);
+
+      await service.handleSessionEvent(DEVICE_ID, {
+        v: 1,
+        sid: SID,
+        event: 'stop',
+        mono: 900_000,
+      });
+
+      expect(live.publishEvent).not.toHaveBeenCalled();
     });
   });
 
