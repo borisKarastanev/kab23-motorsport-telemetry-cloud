@@ -96,11 +96,36 @@ MQTT_DEVICE_PASSWORD=<that password> node scripts/mock-telemetry-publisher.js TE
 curl -b cookies.txt 'localhost:3000/sessions/<sessionId>/telemetry?maxPoints=500'
 ```
 
-Two flags on the publisher exercise the store-and-forward path without a real
-LTE link: `DROP_EVERY=30` simulates a 5 s outage every 30 s (frames spool, then
-replay on `cars/<deviceId>/backfill`), and `REPLAY_BACKFILL=1` sends every batch
-twice — the row count must not change, because the hypertable dedups on
+Two env flags on the publisher exercise the store-and-forward path without a
+real LTE link: `DROP_EVERY=30` simulates a 5 s outage every 30 s (frames spool,
+then replay on `cars/<deviceId>/backfill`), and `REPLAY_BACKFILL=1` sends every
+batch twice — the row count must not change, because the hypertable dedups on
 `(session_id, seq, time)`.
+
+### What the mock actually drives
+
+The car laps a **synthetic circuit anchored on Kaloyanovo's real, confirmed
+start/finish gate** (`scripts/lib/circuit.js`), producing ~64 s laps over a
+2 100 m loop at 70–185 km/h. The gate is copied verbatim from the on-car dash's
+`data/track-db.json`; the shape is designed, not surveyed, and is *fitted* to
+the gate so it always crosses it perpendicularly and centrally.
+
+Speed is solved from the track's curvature (cornering limit, then braking and
+traction passes), and the g channels are derived from that speed — so the
+braking zones a detector finds correspond to corners that are really there.
+This is what Phase 4's lap segmentation, sector splits and braking-point
+detection are developed against; the previous mock traced an arbitrary circle
+with no gate and with channels unrelated to the path.
+
+```bash
+--seed <n>        per-lap pace variation (default 20260805). Same seed, same laps.
+GPS_NOISE_M=0.7   GPS jitter, 1σ per axis. Non-zero by default, so the
+                  segmenter's crossing debounce is genuinely exercised.
+--replay <file>   replay a recorded drive instead: a JSONL frame log, or a dash
+                  session record (`{lapMs, lapPaths}`). See scripts/lib/replay.js
+                  for what each format can and cannot reproduce — a dash record
+                  carries geometry only, so its channels are reconstructed.
+```
 
 ## Device credentials
 

@@ -85,7 +85,7 @@
     "rootDir": ".",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.ts$": "ts-jest"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
@@ -94,7 +94,8 @@
     "testEnvironment": "node",
     "roots": [
       "<rootDir>/libs/",
-      "<rootDir>/apps/"
+      "<rootDir>/apps/",
+      "<rootDir>/scripts/"
     ],
     "moduleNameMapper": {
       "^@app/common(|/.*)$": "<rootDir>/libs/common/src/$1",
