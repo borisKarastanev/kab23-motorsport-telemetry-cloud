@@ -7,6 +7,7 @@ import {
   SessionContext,
 } from './device-registry.service';
 import { TelemetryWriterService } from './telemetry-writer.service';
+import { LivePublisherService } from './live-publisher.service';
 import { TelemetrySample } from './entities/telemetry-sample.entity';
 import {
   TELEMETRY_SCHEMA_VERSION,
@@ -40,6 +41,7 @@ export class TelemetryService {
     private readonly registry: DeviceRegistryService,
     private readonly sessions: IngestSessionsService,
     private readonly writer: TelemetryWriterService,
+    private readonly live: LivePublisherService,
   ) {}
 
   async handleFrame(deviceId: string, payload: unknown): Promise<void> {
@@ -53,13 +55,24 @@ export class TelemetryService {
       return;
     }
 
-    this.writer.enqueue(TelemetryService.toSample(context, frame));
+    // Live first, durable second — and the same object for both, so a viewer
+    // cannot be shown a value that differs from the one stored. The publish is
+    // fire-and-forget: it must not delay, and cannot fail, the write that
+    // matters. See LivePublisherService.
+    const sample = TelemetryService.toSample(context, frame);
+    this.live.publishFrame(sample);
+    this.writer.enqueue(sample);
   }
 
   /**
    * A replayed batch from the device's store-and-forward spool. Identical to
    * the live path per frame — the only difference is that these arrive late,
    * possibly more than once, and the dedup index absorbs the repeats.
+   *
+   * **Deliberately not published to the live bus.** A drained backlog is
+   * history: pushing an hour of it at a viewer would rewind their map and
+   * gauges mid-session and leave the car apparently somewhere it no longer is.
+   * It goes to the hypertable, where the analysis path will find it.
    */
   async handleBackfill(deviceId: string, payload: unknown): Promise<void> {
     const batch = this.parse(BackfillBatchDto, payload);
@@ -106,6 +119,7 @@ export class TelemetryService {
       // codebase keeps out of log sinks (see AbstractRepository).
       if (context) {
         this.logger.log(`Session ${context.sessionId} opened by its device`);
+        await this.live.publishEvent(context.carId, context.sessionId, 'start');
       }
       return;
     }
@@ -120,10 +134,18 @@ export class TelemetryService {
       return;
     }
 
-    await this.sessions.closeSession(car.id, event.sid);
+    const session = await this.sessions.closeSession(car.id, event.sid);
     // Flush before forgetting the run, so buffered samples are written while
     // their context is still the one they were built against.
     await this.writer.flush();
+
+    // Announced only after the flush: a viewer told the run ended while its
+    // last 250 ms of samples were still buffered would stop reading, then find
+    // the stored session longer than the one they watched.
+    if (session) {
+      await this.live.publishEvent(car.id, session.id, 'stop');
+    }
+
     this.registry.forget(deviceId, event.sid);
   }
 

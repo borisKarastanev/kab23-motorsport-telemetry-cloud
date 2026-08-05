@@ -15,9 +15,15 @@ export const configValidationSchema = Joi.object({
   JWT_SECRET: Joi.string().required(),
   JWT_EXPIRATION: Joi.number().default(3600),
 
-  // Redis (live pub/sub + last-known-value cache) — wired in Phase 3
+  // Redis — live pub/sub fan-out + last-known-value cache.
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().default(6379),
+
+  // Optional, and blank in local compose where Redis is not reachable off the
+  // container network. The seam exists now so Phase 5 sets a password on a
+  // deployed box by editing `.env`, not by retrofitting config onto a live
+  // service.
+  REDIS_PASSWORD: Joi.string().allow('').optional(),
 
   // MQTT broker (device telemetry ingress)
   MQTT_URL: Joi.string().default('mqtt://localhost:1883'),

@@ -1,1 +1,17 @@
-/* You can add global styles to this file, and also import other style files */
+/**
+ * Shared surface palette.
+ *
+ * Custom properties rather than SCSS variables so component stylesheets pick
+ * them up without importing anything. They live here because the app shell is
+ * the same shell on every screen: the dashboard and the live view had drifted to
+ * four slightly different greys for the same background, panel, border and
+ * muted text, which reads as a rendering bug rather than as a design.
+ */
+:root {
+  --bg: #0e1116;
+  --surface: #171b22;
+  --border: #262b34;
+  --text: #e6e6e6;
+  --muted: #8b93a1;
+  --accent: #4aa3df;
+}

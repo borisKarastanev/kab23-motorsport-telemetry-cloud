@@ -1,0 +1,77 @@
+<header class="topbar">
+  <!-- routerLink, not href: a full page reload would tear down the SPA and
+       re-run the auth guard to arrive at the same place. -->
+  <a class="brand" routerLink="/">Motorsport Telemetry</a>
+  <span class="spacer"></span>
+  <span class="pill" [class]="live.state()">{{ live.state() }}</span>
+</header>
+
+<main class="content">
+  <section class="picker">
+    <h2>Cars</h2>
+
+    @if (carsLoading()) {
+      <p class="muted">Loading…</p>
+    } @else if (carList().length === 0) {
+      <p class="muted">No cars yet. Register one to start streaming.</p>
+    } @else {
+      <ul>
+        @for (car of carList(); track car.id) {
+          <li>
+            <button
+              type="button"
+              [class.active]="car.id === selected()?.id"
+              (click)="select(car.id)"
+            >
+              <span class="name">{{ car.name }}</span>
+              @if (car.make || car.model) {
+                <span class="muted">{{ car.make }} {{ car.model }}</span>
+              }
+            </button>
+          </li>
+        }
+      </ul>
+    }
+  </section>
+
+  @if (!selected()) {
+    <section class="panel empty">
+      <p>Select a car to watch it live.</p>
+    </section>
+  } @else {
+    <section class="panel">
+      <header class="panel-head">
+        <h1>{{ selected()!.name }}</h1>
+        @if (live.sessionActive()) {
+          <span class="pill connected">On track</span>
+        } @else {
+          <span class="pill">Between sessions</span>
+        }
+      </header>
+
+      @if (live.error(); as message) {
+        <p class="error">{{ message }}</p>
+      }
+
+      <app-gauges [frame]="live.latest()" />
+
+      <div class="map">
+        <app-track-trace
+          [points]="live.trace()"
+          [position]="live.position()"
+        />
+      </div>
+
+      <footer class="meta muted">
+        <!-- `!== null`, not truthiness: delivery is routinely 0–1 ms locally,
+             and a truthy test hides the figure exactly when it is best.
+             Redis → gateway → browser only; the LTE hop in front of ingest is
+             not measured, and will not be until the on-car uplink ships. -->
+        @if (live.latencyMs() !== null) {
+          <span>delivery ~{{ live.latencyMs() }} ms</span>
+        }
+        <span>{{ live.trace().length }} points</span>
+      </footer>
+    </section>
+  }
+</main>

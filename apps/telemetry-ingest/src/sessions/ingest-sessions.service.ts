@@ -94,8 +94,12 @@ export class IngestSessionsService {
    * Scoped by `carId` as well as `sid` for the same reason `openSession` is:
    * otherwise any car could end another team's session in progress just by
    * publishing a stop carrying their `sid`.
+   *
+   * Returns the closed session, or null if this stop closed nothing. The caller
+   * needs the id to announce the end on the live bus, and null is what keeps a
+   * retransmitted stop from announcing a second one.
    */
-  async closeSession(carId: string, sid: string): Promise<void> {
+  async closeSession(carId: string, sid: string): Promise<SessionRef | null> {
     const result = await this.sessions.update(
       { deviceSessionId: sid, carId, status: SessionStatus.LIVE },
       { status: SessionStatus.COMPLETED, endedAt: new Date() },
@@ -103,6 +107,11 @@ export class IngestSessionsService {
 
     if (!result.affected) {
       this.logger.debug('Stop event for a session that was not live');
+      return null;
     }
+
+    // Re-read rather than `RETURNING`: this runs once per session, and the
+    // update's own filter has already proved the row belongs to this car.
+    return this.findByDeviceSessionId(sid);
   }
 }

@@ -17,17 +17,19 @@ Pi (CAN+GPS) --MQTT/TLS over LTE--> Mosquitto --> telemetry-ingest --> Timescale
                                                                    \--> Redis pub/sub --> api (WS) --> Angular
 ```
 
-- **`apps/api`** — NestJS modular monolith (REST + later WebSocket). Modules:
-  `auth`, `users` (Phase 0); `teams`, `cars`, `sessions`, `analysis` (later).
+- **`apps/api`** — NestJS modular monolith (REST + a socket.io gateway). Modules:
+  `auth`, `users` (Phase 0); `teams`, `cars`, `sessions` (Phase 1–2); `live`
+  (Phase 3); `analysis` (later).
 - **`apps/telemetry-ingest`** — separate NestJS MQTT consumer. Its own process
   because ingest scales/fails independently of the request/response API.
 - **`libs/common`** — shared TypeORM base classes, config, logger, enums,
-  decorators, MQTT topic constants (ported from the car-repair-shop reference).
-- **`frontend`** — Angular standalone app; cookie-based auth shell.
+  decorators, MQTT topic constants, the Redis module and the live wire contract.
+- **`frontend`** — Angular standalone app: cookie-based auth shell plus the
+  team-manager live view.
 
 Storage: **PostgreSQL + TimescaleDB** (one engine — domain tables + telemetry
-hypertables). **Redis** for the live path (Phase 3). **Mosquitto** for device
-ingress.
+hypertables). **Redis** for the live path — pub/sub fan-out and a last-known-value
+cache, never durable storage. **Mosquitto** for device ingress.
 
 ## Prerequisites
 
@@ -108,7 +110,20 @@ nothing. Credentials are issued by `POST /cars/:id/mqtt-credentials` and shown
 **once** — the platform stores no copy, so a lost credential is rotated by
 calling the endpoint again. Changing a car's `deviceId` revokes the old one.
 
-## Status — Phases 0–2 complete
+## Live view
+
+`/live` in the Angular app lists the caller's cars; `/live/:carId` watches one.
+Frames go ingest → Redis → WebSocket gateway → browser, published *before* the
+database flush so a viewer never waits on it. Measured delivery latency
+(Redis → gateway → browser) is ~1 ms locally, against a 1–2 s glass-to-glass
+budget — the rest of that budget belongs to the LTE hop, which cannot be
+measured until the on-car uplink ships.
+
+Two checks guard it: the `Authentication` cookie at the socket handshake, and
+`requireReadableCar` on every `subscribe`. A car outside the caller's tenant is
+refused with the same flat "Car not found" the REST layer uses.
+
+## Status — Phases 0–3 complete (cloud side)
 
 - [x] NestJS monorepo (`api` monolith + `telemetry-ingest`) + `libs/common`
 - [x] Postgres/TimescaleDB, Redis, Mosquitto via docker-compose
@@ -119,6 +134,11 @@ calling the endpoint again. Changing a car's `deviceId` revokes the old one.
 - [x] Device-driven sessions: the car opens and closes its own runs over MQTT
 - [x] Store-and-forward backfill replay
 - [x] Angular 22 auth shell (login → guarded dashboard, driver vs manager view)
+- [x] Redis pub/sub fan-out + last-known-value cache (Phase 3)
+- [x] WebSocket gateway with cookie auth and per-car authorization
+- [x] Team-manager live view: gauges, SVG track trace, car picker
 
-Next: **Phase 3** — Redis pub/sub + WebSocket gateway for the near-live
-team-manager view.
+Next: **Phase 4** — lap segmentation, racing line, sector times and the driver
+analysis UI. Phase 2's on-car uplink is deliberately scheduled last, after the
+Phase 5 deploy, so TLS is already up when the dash first connects to a public
+broker.
