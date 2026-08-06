@@ -15,7 +15,8 @@
     "start:prod": "node dist/apps/api/main",
     "start:local": "docker compose up -d timescaledb redis mosquitto && concurrently -n api,ingest,web -c blue,magenta,green \"corepack pnpm run start:api\" \"corepack pnpm run start:ingest\" \"corepack pnpm --dir frontend start\"",
     "lint": "eslint \"{apps,libs}/**/*.ts\" --fix",
-    "test": "jest"
+    "test": "jest",
+    "test:coverage": "jest --coverage --passWithNoTests"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",
@@ -91,6 +92,11 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "./coverage",
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "json-summary"
+    ],
     "testEnvironment": "node",
     "roots": [
       "<rootDir>/libs/",

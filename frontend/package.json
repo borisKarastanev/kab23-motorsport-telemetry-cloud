@@ -6,7 +6,8 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "test": "ng test",
+    "test:coverage": "ng test --no-watch --coverage --coverage-reporters=text-summary --coverage-reporters=lcov --coverage-reporters=json-summary"
   },
   "private": true,
   "dependencies": {
@@ -24,6 +25,7 @@
     "@angular/build": "^22.1.2",
     "@angular/cli": "^22.1.2",
     "@angular/compiler-cli": "^22.1.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "jsdom": "^30.0.1",
     "prettier": "^3.8.1",
     "typescript": "~6.0.2",
