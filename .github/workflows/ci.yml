@@ -29,8 +29,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Test
-        run: pnpm test -- --passWithNoTests
+      - name: Test with coverage
+        # --passWithNoTests and --coverage both live in the test:coverage
+        # script itself, not appended here: pnpm inserts a literal `--`
+        # before passthrough args when the target script already has its own
+        # args, which jest's CLI then reads as "everything after this is a
+        # positional test-name pattern" — turning --passWithNoTests into a
+        # (zero-match) pattern instead of a flag. Baking both into the script
+        # sidesteps the passthrough entirely rather than working around it.
+        run: pnpm run test:coverage
         env:
           # Dummy values only — these specs mock every repository and never open
           # a real connection. ConfigModule still validates presence eagerly at
@@ -47,6 +54,35 @@ jobs:
           MQTT_PASSWORD: test-mqtt-not-for-production
           MQTT_ADMIN_USERNAME: test-admin
           MQTT_ADMIN_PASSWORD: test-mqtt-admin-not-for-production
+
+      - name: Coverage summary
+        # always(), so a coverage report still shows up for triage even when
+        # a test failed — jest writes coverage for whatever it ran before the
+        # failure. Build below stays conditional as before: it still only
+        # runs once Test has actually passed.
+        if: always()
+        run: |
+          node .github/scripts/coverage-summary.js \
+            "Backend (api + telemetry-ingest)" coverage/coverage-summary.json \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-backend
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload coverage summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary-backend
+          path: coverage/coverage-summary.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Build
         run: pnpm run build
@@ -76,8 +112,136 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Test
-        run: pnpm test -- --no-watch
+      - name: Test with coverage
+        # --no-watch and --coverage both live in the test:coverage script
+        # itself for the same pnpm-passthrough reason noted in the backend
+        # job: not needed here since nothing passes extra flags anyway, but
+        # kept self-contained on purpose so it stays true if that changes.
+        run: pnpm run test:coverage
+
+      - name: Coverage summary
+        if: always()
+        # working-directory is frontend/ for `run:` steps (defaults, above),
+        # so this path is relative to there; the upload-artifact `path:`
+        # below is an action input, not a shell command, and is NOT affected
+        # by that default — it stays relative to the repo root.
+        run: |
+          node ../.github/scripts/coverage-summary.js \
+            "Frontend (Angular)" coverage/frontend/coverage-summary.json \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-frontend
+          path: frontend/coverage/frontend/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload coverage summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary-frontend
+          path: frontend/coverage/frontend/coverage-summary.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Build
         run: pnpm run build
+
+  coverage-comment:
+    name: Coverage report
+    needs: [backend, frontend]
+    # always(): still worth posting a combined report — with the failing
+    # side marked unavailable — when only one of the two jobs went red,
+    # rather than silently skipping the whole comment.
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download backend coverage summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-summary-backend
+          path: coverage-summaries/backend
+        continue-on-error: true
+
+      - name: Download frontend coverage summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-summary-frontend
+          path: coverage-summaries/frontend
+        continue-on-error: true
+
+      - name: Post coverage report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = require('path');
+            const { renderCoverageBlock } = require(
+              path.join(process.env.GITHUB_WORKSPACE, '.github/scripts/coverage-summary.js'),
+            );
+
+            const backend = renderCoverageBlock(
+              'Backend (api + telemetry-ingest)',
+              'coverage-summaries/backend/coverage-summary.json',
+            );
+            const frontend = renderCoverageBlock(
+              'Frontend (Angular)',
+              'coverage-summaries/frontend/coverage-summary.json',
+            );
+
+            // Hidden marker, not a visible heading: it is how this step finds
+            // its own previous comment on the next push to the same PR, so
+            // coverage tracking updates one comment in place rather than
+            // piling up a new one on every commit.
+            const marker = '<!-- coverage-report -->';
+            const body = [
+              marker,
+              '## Code coverage',
+              '',
+              backend,
+              frontend,
+              `_Commit ${context.sha.substring(0, 7)}_`,
+            ].join('\n');
+
+            await core.summary.addRaw(body).write();
+
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+              const existing = comments.find(
+                (comment) => comment.body && comment.body.includes(marker),
+              );
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body,
+                });
+              }
+            } catch (error) {
+              // A PR from a fork gets a read-only GITHUB_TOKEN on the
+              // `pull_request` trigger by design — that must not fail this
+              // job, since the job summary above already carries the report.
+              core.warning(`Could not post the coverage comment: ${error.message}`);
+            }
