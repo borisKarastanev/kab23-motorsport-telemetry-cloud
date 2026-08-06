@@ -63,9 +63,14 @@ export class SessionAnalysis {
     effect(() => this.analysis.open(this.id()));
   }
 
+  /**
+   * Keyed on there being no laps, not on there being a reason: a forced
+   * recompute that could not run answers with the reason *and* the laps it
+   * kept, and those laps are still worth drawing.
+   */
   protected readonly emptyMessage = computed(() => {
     const reason = this.analysis.reason();
-    return reason ? REASONS[reason] : null;
+    return reason && !this.analysis.laps().length ? REASONS[reason] : null;
   });
 
   protected readonly activeLabel = computed(() => {
@@ -102,15 +107,14 @@ export class SessionAnalysis {
   // Chart series
   // ---------------------------------------------------------------------------
 
-  private readonly activePoints = computed(
+  /** One name per series, used by both the template and the series builders. */
+  protected readonly activePoints = computed(
     () => this.analysis.activeTrace()?.points ?? [],
   );
-  private readonly referencePoints = computed(
+  protected readonly referencePoints = computed(
     () => this.analysis.referenceTrace()?.points ?? [],
   );
 
-  protected readonly tracePoints = this.activePoints;
-  protected readonly ghostPoints = this.referencePoints;
   protected readonly brakingPoints = computed(
     () => this.analysis.activeLapRow()?.brakingPoints ?? [],
   );

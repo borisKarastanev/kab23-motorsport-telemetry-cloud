@@ -28,7 +28,12 @@ export class QueryTraceDto {
   maxPoints?: number;
 }
 
-export class QueryCompareDto {
+/**
+ * Extends rather than repeats `maxPoints`: the 5 000 cap exists to stop a
+ * caller asking for a payload no map can draw, and a second copy of it is a
+ * second place to forget when it moves.
+ */
+export class QueryCompareDto extends QueryTraceDto {
   /**
    * The two laps to compare, as `?laps=2,5`.
    *
@@ -47,11 +52,4 @@ export class QueryCompareDto {
   @IsInt({ each: true })
   @Min(1, { each: true })
   laps: number[];
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(2)
-  @Max(5000)
-  maxPoints?: number;
 }

@@ -1,5 +1,6 @@
 import { Component, computed, input } from '@angular/core';
 import { LiveFrame } from '../../core/models/live-telemetry.model';
+import { lapTime } from '../../core/format';
 
 interface Reading {
   label: string;
@@ -19,22 +20,6 @@ interface Reading {
  */
 const show = (value?: number, digits = 0): string =>
   value == null ? '—' : value.toFixed(digits);
-
-/** Lap time as m:ss.t — the format the on-car dash already shows. */
-const lapTime = (ms?: number): string => {
-  if (ms == null) {
-    return '—';
-  }
-
-  // Rounded to tenths *before* the split, not after. Splitting first and then
-  // rounding the remainder turns 59 990 ms into "0:60.0" — the seconds field
-  // rounds up past the minute it was already divided out of.
-  const tenths = Math.round(ms / 100);
-  const minutes = Math.floor(tenths / 600);
-  const seconds = ((tenths % 600) / 10).toFixed(1).padStart(4, '0');
-
-  return `${minutes}:${seconds}`;
-};
 
 /**
  * The current reading of each channel.
@@ -104,7 +89,7 @@ export class Gauges {
       { label: 'Coolant', value: show(frame?.coolant, 1), unit: '°C' },
       { label: 'Oil', value: show(frame?.oil, 1), unit: '°C' },
       { label: 'Lap', value: show(frame?.lap) },
-      { label: 'Lap time', value: lapTime(frame?.lapMs) },
+      { label: 'Lap time', value: lapTime(frame?.lapMs, 1) },
       { label: 'G lat', value: show(frame?.gx, 2), unit: 'g' },
       { label: 'G long', value: show(frame?.gy, 2), unit: 'g' },
     ];

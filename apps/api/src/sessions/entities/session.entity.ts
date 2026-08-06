@@ -75,8 +75,9 @@ export class Session extends AbstractEntity<Session> {
    * committed, so a crash mid-derivation leaves the session looking underived
    * and the next read simply tries again. See `AnalysisService`.
    *
-   * A recompute (a corrected gate, a device disagreeing with us) clears the
-   * laps and this together.
+   * A recompute (a corrected gate, a device disagreeing with us) replaces the
+   * laps and moves this forward in one step — it never clears either, or a
+   * re-derivation that could not run would destroy the answer already held.
    */
   @Column({ type: 'timestamptz', nullable: true })
   analyzedAt?: Date;

@@ -27,10 +27,17 @@ export interface LapsResponseDto {
   /** When the derivation last ran; null if it has not. */
   analyzedAt: Date | null;
   /**
-   * Present only when `laps` is empty. The session itself already carries the
-   * `track` string the client would otherwise want alongside this, so there is
-   * nothing to echo back — `no-track-gate` says everything about why that
-   * string did not resolve.
+   * Why this derivation produced nothing.
+   *
+   * On a read that is always alongside an empty `laps`. The one exception is a
+   * forced recompute that could not run: the previously derived laps are kept
+   * rather than destroyed, so they come back with the reason the re-derivation
+   * declined. A client showing an empty state should key it on `laps.length`,
+   * not on the presence of this.
+   *
+   * The session itself already carries the `track` string a client would
+   * otherwise want alongside this, so there is nothing to echo back —
+   * `no-track-gate` says everything about why that string did not resolve.
    */
   reason?: AnalysisSkipReason;
 }

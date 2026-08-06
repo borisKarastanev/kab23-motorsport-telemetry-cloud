@@ -26,7 +26,11 @@
  *   --replay <file> replay a recorded drive instead of the synthetic circuit.
  *                   Accepts a JSONL frame log, or a dash session record
  *                   (`{lapMs, lapPaths}`) — see scripts/lib/replay.js for what
- *                   each format can and cannot reproduce.
+ *                   each format can and cannot reproduce. The run ends and the
+ *                   session closes when the recording does.
+ *   --replay-loop   repeat the recording instead of ending with it, for driving
+ *                   a long run off a short record. The session then only closes
+ *                   on Ctrl-C, as the synthetic circuit does.
  *   --seed <n>      PRNG seed for the circuit's per-lap variation (default
  *                   20260805). Same seed, same laps.
  *   --lap-m <n>     lap length in metres (default 2100, a plausible club
@@ -56,12 +60,15 @@ const { loadReplaySource } = require('./lib/replay');
 const argv = process.argv.slice(2);
 const positional = [];
 let replayFile = null;
+let replayLoop = false;
 let seed = 20260805;
 let targetLapM;
 
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--replay') {
     replayFile = argv[++i];
+  } else if (argv[i] === '--replay-loop') {
+    replayLoop = true;
   } else if (argv[i] === '--seed') {
     seed = Number(argv[++i]);
   } else if (argv[i] === '--lap-m') {
@@ -98,8 +105,12 @@ if (!password) {
 let source;
 try {
   source = replayFile
-    ? loadReplaySource(replayFile)
-    : new CircuitDriver({ seed, gpsNoiseM, ...(targetLapM ? { targetLapM } : {}) });
+    ? loadReplaySource(replayFile, { loop: replayLoop })
+    : new CircuitDriver({
+        seed,
+        gpsNoiseM,
+        ...(targetLapM ? { targetLapM } : {}),
+      });
 } catch (error) {
   console.error(`[mock] ${error.message}`);
   process.exit(1);
@@ -213,7 +224,7 @@ client.on('connect', () => {
   const timer = setInterval(() => {
     const sample = source.step(TICK_MS);
 
-    // A replay source runs out; the circuit never does.
+    // A replay source runs out unless `--replay-loop`; the circuit never does.
     if (!sample) {
       clearInterval(timer);
       console.log('[mock] replay exhausted — closing the session');

@@ -1,7 +1,7 @@
 import { AbstractRepository } from '@app/common';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Lap } from './entities/lap.entity';
 
 @Injectable()
@@ -25,13 +25,6 @@ export class LapsRepository extends AbstractRepository<Lap> {
 
   findOneByNumber(sessionId: string, lapNumber: number): Promise<Lap | null> {
     return this.lapsRepository.findOne({ where: { sessionId, lapNumber } });
-  }
-
-  findByNumbers(sessionId: string, lapNumbers: number[]): Promise<Lap[]> {
-    return this.lapsRepository.find({
-      where: { sessionId, lapNumber: In(lapNumbers) },
-      order: { lapNumber: 'ASC' },
-    });
   }
 
   /**
@@ -62,8 +55,35 @@ export class LapsRepository extends AbstractRepository<Lap> {
       .execute();
   }
 
-  /** Clears a session's laps so a recompute replaces rather than merges. */
-  async deleteBySession(sessionId: string): Promise<void> {
-    await this.lapsRepository.delete({ sessionId });
+  /**
+   * Swap a session's laps for a freshly derived set, atomically.
+   *
+   * One transaction rather than a delete followed by an insert, because the two
+   * are not independent: a recompute that cleared the rows first would leave
+   * every concurrent reader looking at a session with no laps for the length of
+   * the write, and would lose them outright if the insert failed. The caller
+   * only reaches this once it *has* the replacement rows — see
+   * `AnalysisService.recompute`.
+   *
+   * `orIgnore` for the same reason `insertIgnoringDuplicates` uses it: a plain
+   * first read may be deriving the same session concurrently, and its rows are
+   * redundant rather than wrong.
+   */
+  async replaceSession(sessionId: string, laps: Lap[]): Promise<void> {
+    await this.lapsRepository.manager.transaction(async (manager) => {
+      await manager.delete(Lap, { sessionId });
+
+      if (!laps.length) {
+        return;
+      }
+
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(Lap)
+        .values(laps)
+        .orIgnore()
+        .execute();
+    });
   }
 }

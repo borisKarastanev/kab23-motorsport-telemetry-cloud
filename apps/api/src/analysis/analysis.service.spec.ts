@@ -75,11 +75,14 @@ describe('AnalysisService', () => {
       | 'findBySession'
       | 'findOneByNumber'
       | 'insertIgnoringDuplicates'
-      | 'deleteBySession'
+      | 'replaceSession'
     >
   >;
   let samples: jest.Mocked<
-    Pick<AnalysisSamplesRepository, 'findRange' | 'countRange'>
+    Pick<
+      AnalysisSamplesRepository,
+      'findRange' | 'countRange' | 'findLapWindow'
+    >
   >;
 
   /** Rows the service "persisted", so findBySession can hand them back. */
@@ -103,8 +106,8 @@ describe('AnalysisService', () => {
       insertIgnoringDuplicates: jest.fn(async (rows: Lap[]) => {
         stored = rows;
       }),
-      deleteBySession: jest.fn<Promise<void>, [string]>(async () => {
-        stored = [];
+      replaceSession: jest.fn(async (_sessionId: string, rows: Lap[]) => {
+        stored = rows;
       }),
     };
     samples = {
@@ -112,6 +115,14 @@ describe('AnalysisService', () => {
       findRange: jest.fn(async (_id: string, from: Date, to: Date) =>
         data.filter((sample) => sample.time >= from && sample.time <= to),
       ),
+      // The window plus the fix either side of it, as the real query returns —
+      // the crossing instants fall between stored samples, so a lap's trace
+      // cannot be anchored on the line without them.
+      findLapWindow: jest.fn(async (_id: string, from: Date, to: Date) => [
+        ...data.filter((sample) => sample.time < from).slice(-1),
+        ...data.filter((sample) => sample.time >= from && sample.time <= to),
+        ...data.filter((sample) => sample.time > to).slice(0, 1),
+      ]),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -248,6 +259,47 @@ describe('AnalysisService', () => {
       expect(laps.insertIgnoringDuplicates).not.toHaveBeenCalled();
     });
 
+    it('does not re-segment a no-crossings session on every read', async () => {
+      // Not stamping `analyzedAt` is what lets a corrected gate be picked up on
+      // the next load. Without a memo it also means re-reading and re-cutting
+      // up to MAX_ANALYSIS_SAMPLES rows on every page load, forever.
+      samples.findRange.mockResolvedValue([]);
+      samples.countRange.mockResolvedValue(10);
+
+      await service.getLaps(user, SESSION_ID);
+      const second = await service.getLaps(user, SESSION_ID);
+
+      expect(second).toMatchObject({ laps: [], reason: 'no-crossings' });
+      expect(samples.findRange).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-segments a no-crossings session once backfill lands', async () => {
+      samples.findRange.mockResolvedValue([]);
+      samples.countRange.mockResolvedValue(10);
+      await service.getLaps(user, SESSION_ID);
+
+      // More samples than last time: the memo describes a session that no
+      // longer exists, and the crossings may be in the rows that just arrived.
+      samples.countRange.mockResolvedValue(11);
+      await service.getLaps(user, SESSION_ID);
+
+      expect(samples.findRange).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-segments a no-crossings session when the gate is corrected', async () => {
+      samples.findRange.mockResolvedValue([]);
+      samples.countRange.mockResolvedValue(10);
+      await service.getLaps(user, SESSION_ID);
+
+      tracks.resolve.mockResolvedValue({
+        ...KALOYANOVO_TRACK,
+        updatedAt: new Date('2026-08-06T09:00:00.000Z'),
+      } as Track);
+      await service.getLaps(user, SESSION_ID);
+
+      expect(samples.findRange).toHaveBeenCalledTimes(2);
+    });
+
     it('never reports a reason alongside laps', async () => {
       const result = await service.getLaps(user, SESSION_ID);
 
@@ -265,10 +317,12 @@ describe('AnalysisService', () => {
 
       const result = await service.recompute(user, SESSION_ID);
 
-      // Cleared first: a corrected gate can yield *fewer* laps, and an upsert
-      // would leave the extras behind.
-      expect(laps.deleteBySession).toHaveBeenCalledWith(SESSION_ID);
-      expect(sessions.setAnalyzedAt).toHaveBeenCalledWith(SESSION_ID, null);
+      // Replaced in one call, not cleared and re-inserted: a corrected gate can
+      // yield *fewer* laps, so an upsert would leave the extras behind.
+      expect(laps.replaceSession).toHaveBeenCalledWith(
+        SESSION_ID,
+        expect.any(Array),
+      );
       expect(result.laps.length).toBeGreaterThanOrEqual(2);
     });
 
@@ -280,7 +334,48 @@ describe('AnalysisService', () => {
       await service.recompute(user, SESSION_ID);
 
       expect(samples.findRange).toHaveBeenCalled();
-      expect(laps.insertIgnoringDuplicates).toHaveBeenCalledTimes(1);
+      expect(laps.replaceSession).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['too-many-samples', () => samples.countRange.mockResolvedValue(1e9)],
+      ['no-samples', () => samples.countRange.mockResolvedValue(0)],
+      ['no-track-gate', () => tracks.resolve.mockResolvedValue(null)],
+      ['no-crossings', () => samples.findRange.mockResolvedValue([])],
+    ])(
+      'keeps the existing laps when the re-derivation ends in %s',
+      async (reason, breakIt) => {
+        // The failure this guards: the old code deleted first and derived
+        // after, so a session that has since grown past the sample ceiling on
+        // backfill — or whose track slug stopped resolving — answered the
+        // button press by destroying the laps it already had, permanently.
+        const derived = (await service.getLaps(user, SESSION_ID)).laps;
+        expect(derived.length).toBeGreaterThanOrEqual(2);
+
+        sessions.requireReadableSession.mockResolvedValue(
+          session({ analyzedAt: new Date() }),
+        );
+        breakIt();
+
+        const result = await service.recompute(user, SESSION_ID);
+
+        expect(result.reason).toBe(reason);
+        expect(result.laps).toEqual(derived);
+        expect(stored).toEqual(derived);
+        expect(laps.replaceSession).not.toHaveBeenCalled();
+      },
+    );
+
+    it('keeps the laps of a session that went live again', async () => {
+      const derived = (await service.getLaps(user, SESSION_ID)).laps;
+      sessions.requireReadableSession.mockResolvedValue(
+        session({ status: SessionStatus.LIVE, analyzedAt: new Date() }),
+      );
+
+      const result = await service.recompute(user, SESSION_ID);
+
+      expect(result).toMatchObject({ reason: 'session-live' });
+      expect(result.laps).toEqual(derived);
     });
   });
 
@@ -306,6 +401,35 @@ describe('AnalysisService', () => {
           trace.points[i - 1].elapsedMs,
         );
       }
+    });
+
+    it('opens and closes the trace on the start/finish line', async () => {
+      const [lap] = (await service.getLaps(user, SESSION_ID)).laps;
+      const trace = await service.getLapTrace(
+        user,
+        SESSION_ID,
+        lap.lapNumber,
+        Number.MAX_SAFE_INTEGER,
+      );
+      const last = trace.points[trace.points.length - 1];
+
+      // No stored sample sits on the crossing instant, so a plain range read
+      // would start the axis at the first fix *past* the line and end it at the
+      // last one before — leaving the trace short at both ends and giving two
+      // laps distance axes with different origins.
+      const inRange = await samples.findRange(
+        SESSION_ID,
+        lap.startedAt,
+        lap.endedAt,
+      );
+      expect(inRange[0].time.getTime()).toBeGreaterThan(
+        lap.startedAt.getTime(),
+      );
+
+      // The header and the chart describe the same lap: both endpoints are
+      // rounded to the millisecond independently, so allow one.
+      expect(Math.abs(last.elapsedMs - lap.lapMs)).toBeLessThanOrEqual(1);
+      expect(Math.abs(last.distM - lap.distanceM)).toBeLessThan(2);
     });
 
     it('carries the channels the charts draw', async () => {
@@ -390,7 +514,7 @@ describe('AnalysisService', () => {
       expect(samples.countRange).not.toHaveBeenCalled();
       expect(laps.findBySession).not.toHaveBeenCalled();
       expect(laps.findOneByNumber).not.toHaveBeenCalled();
-      expect(laps.deleteBySession).not.toHaveBeenCalled();
+      expect(laps.replaceSession).not.toHaveBeenCalled();
       expect(laps.insertIgnoringDuplicates).not.toHaveBeenCalled();
     });
   });

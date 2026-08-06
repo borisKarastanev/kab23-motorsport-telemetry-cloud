@@ -19,6 +19,9 @@ import { duration, lapTime } from './format';
   imports: [DatePipe, RouterLink],
   templateUrl: './sessions.html',
   styleUrl: './sessions.scss',
+  // Per view, so navigating back from a session re-reads the list — lap counts
+  // appear as a side effect of opening a session. See `SessionsService`.
+  providers: [SessionsService],
 })
 export class Sessions {
   private readonly sessions = inject(SessionsService);

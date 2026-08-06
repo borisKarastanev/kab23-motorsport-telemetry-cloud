@@ -133,6 +133,25 @@ describe('detectBrakingPoints', () => {
     expect(zones[0].distM).toBeCloseTo(lap[10].distM, 0);
   });
 
+  it('merges into a zone re-opened by the very last sample', () => {
+    // Two fragments, each too short to count on its own, separated by a release
+    // inside the merge window — and the second one starts on the final sample
+    // of the lap, so there is no next iteration to carry the merged zone's end
+    // forward. Left to that iteration, the zone is pushed with the end it had
+    // before the merge and the duration test throws away a real marker.
+    const lap = lapFromG([
+      ...cruise(10),
+      ...brake(1.0, 1),
+      ...cruise(2),
+      ...brake(1.0, 1),
+    ]);
+
+    const zones = detectBrakingPoints(lap);
+
+    expect(zones).toHaveLength(1);
+    expect(zones[0].distM).toBeCloseTo(lap[10].distM, 0);
+  });
+
   it('keeps two genuinely separate zones apart', () => {
     // A full second of nothing between them: two corners, two markers.
     const lap = lapFromG([

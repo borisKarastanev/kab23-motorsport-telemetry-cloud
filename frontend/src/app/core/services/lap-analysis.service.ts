@@ -58,7 +58,13 @@ export class LapAnalysisService {
   readonly analyzedAt = computed(
     () => this.lapsResource.value()?.analyzedAt ?? null,
   );
-  /** Why there are no laps, when there are none. Never set alongside laps. */
+  /**
+   * Why the last derivation produced nothing.
+   *
+   * Normally set only when `laps` is empty; a forced recompute that could not
+   * run keeps the laps it already had and returns both. So read it as "why
+   * there is nothing *new*", and gate empty states on `laps().length`.
+   */
   readonly reason = computed(() => this.lapsResource.value()?.reason ?? null);
   readonly loading = this.lapsResource.isLoading;
   readonly error = this.lapsResource.error;

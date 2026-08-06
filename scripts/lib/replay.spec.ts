@@ -116,7 +116,10 @@ describe('dash session records', () => {
 
       for (const line of lines) {
         for (let i = 1; i < line.length; i++) {
-          nearest = Math.min(nearest, pointToSegmentM(point, line[i - 1], line[i]));
+          nearest = Math.min(
+            nearest,
+            pointToSegmentM(point, line[i - 1], line[i]),
+          );
         }
       }
 
@@ -142,9 +145,27 @@ describe('dash session records', () => {
     expect(mean).toBeLessThan(160);
   });
 
-  it('loops rather than running dry', () => {
+  it('runs out at the end of the recording', () => {
+    // The default, and what lets the publisher close the session: a recording
+    // is a finite thing, so a run replaying one is finite too.
+    const record = dashRecordFixture(1);
+    const source = loadReplaySource(write('once.json', JSON.stringify(record)));
+
+    let steps = 0;
+    while (source.step(TICK_MS)) {
+      steps++;
+      if (steps > 5000) break;
+    }
+
+    // The one lap it holds, to within a tick.
+    expect(steps).toBeCloseTo(record.lapMs[0] / TICK_MS, -1);
+    expect(source.step(TICK_MS)).toBeNull();
+  });
+
+  it('loops when asked to, rather than running dry', () => {
     const source = loadReplaySource(
       write('loop.json', JSON.stringify(dashRecordFixture(1))),
+      { loop: true },
     );
 
     // Well past the single lap it holds.
@@ -177,8 +198,34 @@ describe('dash session records', () => {
 
 describe('JSONL frame logs', () => {
   const frames = [
-    { v: 1, sid: 'a', seq: 1, lat: 42.34, lon: 24.73, speed: 120, rpm: 5200, gx: 0.4, gy: -0.2, gz: 1, lap: 2, lapMs: 1000 },
-    { v: 1, sid: 'a', seq: 2, lat: 42.341, lon: 24.731, speed: 118, rpm: 5100, gx: 0.5, gy: -0.9, gz: 1, lap: 2, lapMs: 1100 },
+    {
+      v: 1,
+      sid: 'a',
+      seq: 1,
+      lat: 42.34,
+      lon: 24.73,
+      speed: 120,
+      rpm: 5200,
+      gx: 0.4,
+      gy: -0.2,
+      gz: 1,
+      lap: 2,
+      lapMs: 1000,
+    },
+    {
+      v: 1,
+      sid: 'a',
+      seq: 2,
+      lat: 42.341,
+      lon: 24.731,
+      speed: 118,
+      rpm: 5100,
+      gx: 0.5,
+      gy: -0.9,
+      gz: 1,
+      lap: 2,
+      lapMs: 1100,
+    },
   ];
 
   const log = () =>
@@ -206,13 +253,67 @@ describe('JSONL frame logs', () => {
     expect(sample.seq).toBeUndefined();
   });
 
-  it('rejects a malformed line by number', () => {
-    expect(() => loadReplaySource(write('bad.jsonl', '{"v":1}\nnot json'))).toThrow(
-      /line 2/,
+  it("replays on the log's own clock, not one frame per tick", () => {
+    // A 25 Hz recording pushed one-frame-per-call through the 10 Hz publisher
+    // would be stretched 2.5×. The publisher mints `mono`, so ingest would
+    // believe it and every derived lap time would come out 2.5× long with
+    // nothing anywhere saying so.
+    // 250 frames 40 ms apart — 10 s at 25 Hz. `lap` rides along as the frame's
+    // index, since it is passed through untouched.
+    const recorded = Array.from({ length: 250 }, (_, i) => ({
+      v: 1,
+      mono: i * 40,
+      lat: 42.34 + i * 1e-5,
+      lon: 24.73,
+      speed: 100,
+      lap: i,
+    }));
+
+    const source = loadReplaySource(
+      write('25hz.jsonl', recorded.map((f) => JSON.stringify(f)).join('\n')),
+    );
+
+    const played: any[] = [];
+    for (
+      let sample = source.step(TICK_MS);
+      sample;
+      sample = source.step(TICK_MS)
+    ) {
+      played.push(sample);
+    }
+
+    // 10 s of recording replayed at 10 Hz is ~100 frames, not 250.
+    expect(played.length).toBeCloseTo(100, -1);
+
+    // Decimated, not truncated: it starts at the first recorded frame and ends
+    // within one tick of the last, having stepped ~2.5 frames per tick.
+    // One tick spans 2.5 recorded frames, so the final tick can legitimately
+    // land short of the last one — but only by that much.
+    expect(played[0].lap).toBe(0);
+    expect(played[played.length - 1].lap).toBeGreaterThanOrEqual(
+      recorded.length - 4,
     );
   });
 
+  it('falls back to one frame per tick when the log has no clock', () => {
+    // A hand-written fixture, or a log from before `mono` existed. Pacing off a
+    // fabricated clock would be worse than admitting there is none.
+    const source = log();
+
+    expect(source.step(TICK_MS).speedKmh).toBe(120);
+    expect(source.step(TICK_MS).speedKmh).toBe(118);
+    expect(source.step(TICK_MS)).toBeNull();
+  });
+
+  it('rejects a malformed line by number', () => {
+    expect(() =>
+      loadReplaySource(write('bad.jsonl', '{"v":1}\nnot json')),
+    ).toThrow(/line 2/);
+  });
+
   it('rejects an empty file', () => {
-    expect(() => loadReplaySource(write('empty.jsonl', '\n\n'))).toThrow(/empty/);
+    expect(() => loadReplaySource(write('empty.jsonl', '\n\n'))).toThrow(
+      /empty/,
+    );
   });
 });

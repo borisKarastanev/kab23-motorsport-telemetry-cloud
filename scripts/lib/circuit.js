@@ -468,7 +468,9 @@ function speedProfile(kappa, ds, { latG, brakeG, accelG, vMaxKmh }) {
   const v = new Float64Array(n);
 
   for (let i = 0; i < n; i++) {
-    const radiusLimit = Math.sqrt((latG * G) / Math.max(Math.abs(kappa[i]), 1e-6));
+    const radiusLimit = Math.sqrt(
+      (latG * G) / Math.max(Math.abs(kappa[i]), 1e-6),
+    );
     v[i] = Math.min(vMax, radiusLimit);
   }
 
@@ -624,20 +626,37 @@ class CircuitDriver {
   step(dtMs) {
     const dt = dtMs / 1000;
 
-    this.distanceM += this.speedAt(this.distanceM) * dt;
+    const entrySpeedMs = this.speedAt(this.distanceM);
+    this.distanceM += entrySpeedMs * dt;
     this.lapMs += dtMs;
 
     if (this.distanceM >= this.lapLengthM) {
       this.distanceM -= this.lapLengthM;
 
+      // How long ago the car actually crossed the line, at the speed it was
+      // doing over this step. Without it the lap clock would be reset at the
+      // tick that *noticed* the crossing rather than at the crossing, and every
+      // reported lap time would carry up to a full tick — 100 ms — of
+      // quantisation from each end.
+      //
+      // That is not cosmetic. These numbers exist to be checked against the
+      // segmenter's, which interpolates the crossing sub-sample; a device-side
+      // time that is only good to ±100 ms makes any disagreement below 100 ms
+      // meaningless, which is most of the disagreements worth catching.
+      const overshootMs =
+        entrySpeedMs > 0 ? (this.distanceM / entrySpeedMs) * 1000 : 0;
+
       // Lap 0 is the out-lap, so it produces no lap time — the first crossing
       // starts the clock, it does not stop anything.
       if (this.lap > 0) {
-        this.completedLapMs.push(Math.round(this.lapMs));
+        this.completedLapMs.push(Math.round(this.lapMs - overshootMs));
       }
 
       this.lap += 1;
-      this.lapMs = 0;
+      // The new lap is already `overshootMs` old: the car crossed the line
+      // partway through this step. Carrying it rather than zeroing is what
+      // makes the *next* lap's time exact too.
+      this.lapMs = overshootMs;
       // `previousSpeedMs` is not updated until the end of this tick, so it still
       // holds the speed the car crossed the line at — the anchor the new
       // profile has to start from.

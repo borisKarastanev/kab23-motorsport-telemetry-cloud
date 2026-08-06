@@ -1,5 +1,6 @@
 import { Gate } from './analysis.types';
 import { METERS_PER_DEG_LAT, metersPerDegLon } from './geo';
+import { isPositioned } from './sample-math';
 
 /**
  * Does a pair of consecutive fixes cross the gate?
@@ -85,10 +86,46 @@ export interface FindGateCrossingOptions {
   requiredDirSign?: 1 | -1 | 0;
 }
 
+/**
+ * A gate in local metres, projected once.
+ *
+ * `findGateCrossing` runs over every consecutive pair in the session — up to
+ * `MAX_ANALYSIS_SAMPLES` of them, with the dash's 250 m pre-filter deliberately
+ * dropped — and none of this depends on the fixes. Projecting it per call meant
+ * a `Math.cos` and two closure allocations 300 000 times per derivation to
+ * recompute a constant. Built by `projectGate`, held by `LapSegmenter`.
+ */
+export interface ProjectedGate {
+  midLat: number;
+  midLon: number;
+  mLon: number;
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+}
+
+export function projectGate(gate: Gate): ProjectedGate {
+  // Local metres around the gate midpoint (x = east, y = north).
+  const midLat = (gate.lat1 + gate.lat2) / 2;
+  const midLon = (gate.lon1 + gate.lon2) / 2;
+  const mLon = metersPerDegLon(midLat);
+
+  return {
+    midLat,
+    midLon,
+    mLon,
+    ax: (gate.lon1 - midLon) * mLon,
+    ay: (gate.lat1 - midLat) * METERS_PER_DEG_LAT,
+    bx: (gate.lon2 - midLon) * mLon,
+    by: (gate.lat2 - midLat) * METERS_PER_DEG_LAT,
+  };
+}
+
 export function findGateCrossing(
   prev: CrossingFix,
   cur: CrossingFix,
-  gate: Gate,
+  gate: ProjectedGate,
   options: FindGateCrossingOptions = {},
 ): GateCrossing | null {
   if (!isPositioned(prev) || !isPositioned(cur)) {
@@ -107,21 +144,12 @@ export function findGateCrossing(
     return null;
   }
 
-  // Project to local metres around the gate midpoint (x = east, y = north).
-  const midLat = (gate.lat1 + gate.lat2) / 2;
-  const midLon = (gate.lon1 + gate.lon2) / 2;
-  const mLon = metersPerDegLon(midLat);
-  const ex = (lon: number) => (lon - midLon) * mLon;
-  const ny = (lat: number) => (lat - midLat) * METERS_PER_DEG_LAT;
-
-  const p0x = ex(prev.lon);
-  const p0y = ny(prev.lat);
-  const p1x = ex(cur.lon);
-  const p1y = ny(cur.lat);
-  const ax = ex(gate.lon1);
-  const ay = ny(gate.lat1);
-  const bx = ex(gate.lon2);
-  const by = ny(gate.lat2);
+  // The gate arrives already projected; only the two fixes need mapping in.
+  const { midLat, midLon, mLon, ax, ay, bx, by } = gate;
+  const p0x = (prev.lon - midLon) * mLon;
+  const p0y = (prev.lat - midLat) * METERS_PER_DEG_LAT;
+  const p1x = (cur.lon - midLon) * mLon;
+  const p1y = (cur.lat - midLat) * METERS_PER_DEG_LAT;
 
   // Intersect path segment P0→P1 against gate segment A→B.
   const rx = p1x - p0x;
@@ -164,10 +192,3 @@ export function findGateCrossing(
     t,
   };
 }
-
-const isPositioned = (fix: CrossingFix): boolean =>
-  fix != null &&
-  typeof fix.lat === 'number' &&
-  typeof fix.lon === 'number' &&
-  Number.isFinite(fix.lat) &&
-  Number.isFinite(fix.lon);

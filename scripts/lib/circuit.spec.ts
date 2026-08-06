@@ -208,16 +208,30 @@ describe('speed and g channels', () => {
 
 describe('lap timing', () => {
   it('completes several timed laps with varying times', () => {
-    // The prerequisite's exit criterion. Times are quantised to the 100 ms tick,
-    // so a handful of laps out of many will collide — what matters is that the
-    // spread is real, which is what gives lap-vs-lap comparison something to
-    // draw.
+    // The prerequisite's exit criterion: the spread has to be real, which is
+    // what gives lap-vs-lap comparison something to draw.
     const { driver } = drive(4000);
     const laps: number[] = driver.completedLapMs;
 
     expect(laps.length).toBeGreaterThanOrEqual(3);
     expect(new Set(laps).size).toBeGreaterThanOrEqual(3);
     expect(Math.max(...laps) - Math.min(...laps)).toBeGreaterThanOrEqual(300);
+  });
+
+  it('times laps from the crossing, not from the tick that noticed it', () => {
+    // These numbers exist to be checked against the segmenter's, which
+    // interpolates the crossing sub-sample. A lap clock zeroed at the tick that
+    // detected the overshoot instead of at the crossing carries up to a tick
+    // from each end — ±100 ms at 10 Hz — and a disagreement smaller than that
+    // then means nothing, which is most of the disagreements worth catching.
+    const { driver } = drive(4000);
+    const laps: number[] = driver.completedLapMs;
+
+    expect(laps.length).toBeGreaterThanOrEqual(3);
+    // Quantised to the tick, *every* one of these would be a multiple of 100.
+    expect(laps.filter((ms) => ms % TICK_MS === 0).length).toBeLessThanOrEqual(
+      1,
+    );
   });
 
   it('counts the out-lap as lap 0, as the dash does', () => {

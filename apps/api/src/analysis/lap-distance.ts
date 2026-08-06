@@ -1,5 +1,6 @@
 import { AnalysisSample, LapPoint } from './analysis.types';
 import { distanceM } from './geo';
+import { isPositioned } from './sample-math';
 
 /**
  * The lap's distance axis — how far round the car is, at every sample.
@@ -48,14 +49,23 @@ export function stepM(
 
 /**
  * Turn a lap's samples into distance-indexed points, dropping fixes with no
- * position — they cannot sit on a racing line, and drawing them at (0, 0) puts
- * the car in the Gulf of Guinea.
+ * position.
+ *
+ * The one place a distance axis is built from stored rows — `buildLapTrace`
+ * maps its output onto the wire DTO rather than accumulating its own, so the
+ * distance a braking point is stored at and the distance the map draws it at
+ * cannot come from two different loops. (`LapSegmenter` is the third consumer
+ * of `stepM`, but it builds its axis incrementally as it walks the session,
+ * because it does not know where a lap ends until it gets there.)
+ *
+ * Output is index-parallel to the *located* subset of the input, which is what
+ * lets a caller zip it back against its own richer sample shape.
  */
 export function toLapPoints(samples: AnalysisSample[]): LapPoint[] {
   const points: LapPoint[] = [];
 
   for (const sample of samples) {
-    if (!Number.isFinite(sample.lat) || !Number.isFinite(sample.lon)) {
+    if (!isPositioned(sample)) {
       continue;
     }
 

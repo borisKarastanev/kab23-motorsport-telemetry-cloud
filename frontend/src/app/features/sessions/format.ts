@@ -1,32 +1,13 @@
 /**
- * Shared formatting for lap times and deltas.
+ * Formatting for the analysis views: deltas and session lengths.
  *
  * Module functions, not a pipe: they are called from `computed()`s in three
  * components, and a pipe would only be reachable from templates.
- */
-
-/**
- * Lap time as m:ss.mmm.
  *
- * Milliseconds rather than the on-car dash's tenths: this is post-session
- * analysis, where the difference between two laps is routinely under a tenth
- * and rounding it away is rounding away the answer.
- *
- * Rounded *before* the split, not after. Splitting first and rounding the
- * remainder turns 59 999.6 ms into "0:60.000" — the seconds field rounds up past
- * the minute it was already divided out of.
+ * `lapTime` is re-exported rather than defined here — the live view renders lap
+ * times too, so it lives in `core/`.
  */
-export function lapTime(ms: number | null | undefined): string {
-  if (ms == null) {
-    return '—';
-  }
-
-  const whole = Math.round(ms);
-  const minutes = Math.floor(whole / 60000);
-  const seconds = ((whole % 60000) / 1000).toFixed(3).padStart(6, '0');
-
-  return `${minutes}:${seconds}`;
-}
+export { lapTime } from '../../core/format';
 
 /**
  * A delta as +/-s.mmm.

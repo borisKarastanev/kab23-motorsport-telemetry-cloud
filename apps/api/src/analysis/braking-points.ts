@@ -1,4 +1,5 @@
 import { BrakingPoint, LapPoint } from './analysis.types';
+import { round } from './sample-math';
 
 /**
  * Where the driver got on the brakes, and how hard.
@@ -71,38 +72,37 @@ export function detectBrakingPoints(points: LapPoint[]): BrakingPoint[] {
       continue;
     }
 
-    if (open) {
-      open.peakDecelG = Math.max(open.peakDecelG, decelG);
-      open.end = points[i];
-
-      if (decelG < BRAKING_EXIT_G) {
-        zones.push(open);
-        open = null;
+    if (!open) {
+      if (decelG < BRAKING_ENTER_G) {
+        continue;
       }
-      continue;
+
+      const previous = zones[zones.length - 1];
+      open =
+        previous &&
+        points[i - 1].timeMs - previous.end.timeMs <= BRAKING_MERGE_MS
+          ? // Reopen the previous zone rather than starting a new one, so the
+            // marker stays where the driver first hit the pedal.
+            zones.pop()
+          : // A new zone starts at the *earlier* of the two points: that is
+            // where the driver hit the pedal, and "where they hit the pedal" is
+            // what a braking marker is for. Attributing it to the later point
+            // would place every marker one sample — up to 5 m — late.
+            { start: points[i - 1], end: points[i], peakDecelG: 0 };
     }
 
-    if (decelG < BRAKING_ENTER_G) {
-      continue;
-    }
+    // However the zone came to be open, it now reaches this point. Updated in
+    // one place rather than per branch: the merge branch used to skip this and
+    // leave `end` where it was before the merge, which is invisible until the
+    // merge happens on the last sample of the lap and there is no next
+    // iteration to put it right.
+    open.peakDecelG = Math.max(open.peakDecelG, decelG);
+    open.end = points[i];
 
-    const previous = zones[zones.length - 1];
-    if (
-      previous &&
-      points[i - 1].timeMs - previous.end.timeMs <= BRAKING_MERGE_MS
-    ) {
-      // Reopen the previous zone rather than starting a new one, so the marker
-      // stays where the driver first hit the pedal.
-      open = zones.pop();
-      open.peakDecelG = Math.max(open.peakDecelG, decelG);
-      continue;
+    if (decelG < BRAKING_EXIT_G) {
+      zones.push(open);
+      open = null;
     }
-
-    // The zone starts at the *earlier* of the two points: that is where the
-    // driver hit the pedal, and "where they hit the pedal" is what a braking
-    // marker is for. Attributing it to the later point would place every
-    // marker one sample — up to 5 m — late.
-    open = { start: points[i - 1], end: points[i], peakDecelG: decelG };
   }
 
   // A zone still open at the line: the car braked into the last corner and the
@@ -152,8 +152,3 @@ function decelerationG(a: LapPoint, b: LapPoint): number | null {
   const dvMs = ((b.speedKmh - a.speedKmh) * 1000) / 3600;
   return -dvMs / dtS / G;
 }
-
-const round = (value: number, places: number): number => {
-  const scale = 10 ** places;
-  return Math.round(value * scale) / scale;
-};

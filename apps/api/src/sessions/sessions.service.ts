@@ -227,17 +227,18 @@ export class SessionsService {
   }
 
   /**
-   * Stamp — or clear — the moment the lap derivation last ran.
+   * Stamp the moment the lap derivation last ran.
    *
    * Exposed for `AnalysisService`, which owns when that happens. Unauthorized
    * on purpose: it is only ever reached through a session the caller has
    * already been scoped to, and adding a check here would be a second predicate
    * to keep in step with `requireReadableSession` rather than a second defence.
+   *
+   * There is deliberately no "un-analyze": a recompute swaps the laps and the
+   * stamp forward together, so a session never sits in a state where it has
+   * been analyzed but says it has not.
    */
-  async setAnalyzedAt(
-    sessionId: string,
-    analyzedAt: Date | null,
-  ): Promise<void> {
+  async setAnalyzedAt(sessionId: string, analyzedAt: Date): Promise<void> {
     await this.sessionsRepository.findOneAndUpdate(
       { id: sessionId },
       {

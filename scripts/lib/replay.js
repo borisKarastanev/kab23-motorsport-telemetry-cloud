@@ -20,6 +20,11 @@
  * replay would be silently discarded as a duplicate, which looks exactly like a
  * broken ingest path. The publisher mints a fresh `sid` per run and owns `seq`;
  * these sources return physical channels only.
+ *
+ * **A replay ends by default.** `step` returns null once the recording runs
+ * out, which is what lets the publisher close the session — a recording is a
+ * finite thing and a run that replays one should be finite too. `loop: true`
+ * repeats it instead, for driving a long test off a short record.
  */
 
 const fs = require('fs');
@@ -112,7 +117,7 @@ function findDashRecord(parsed) {
  * decimation. Do not use it to validate anything about the channels.
  */
 class DashRecordSource {
-  constructor(record, { loop = true } = {}) {
+  constructor(record, { loop = false } = {}) {
     this.loop = loop;
     this.laps = record.lapPaths
       .map((flat, index) => buildLap(flat, record.lapMs[index]))
@@ -164,20 +169,40 @@ class DashRecordSource {
  * Lossless for every channel the log actually contains. Missing channels stay
  * missing rather than being reconstructed: a log is evidence, and quietly
  * filling gaps in it would defeat the reason for replaying one.
+ *
+ * **Replayed on the log's own clock**, not one frame per call. A 25 Hz dash log
+ * pushed through the publisher's 10 Hz tick would otherwise be stretched 2.5× —
+ * and since the publisher mints `mono`, ingest would believe it, so every
+ * derived lap time, sector and braking-zone duration would come out 2.5× long
+ * with nothing anywhere saying so. Frames the tick has already passed are
+ * skipped instead, which preserves the recording's duration at whatever rate
+ * the publisher runs.
  */
 class FrameLogSource {
-  constructor(frames, { loop = true } = {}) {
+  constructor(frames, { loop = false } = {}) {
     this.frames = frames;
     this.loop = loop;
     this.index = 0;
     this.exhausted = false;
+
+    // Relative ms of each frame, or null if the log carries no usable clock —
+    // then there is nothing to honour and one frame per call is the best
+    // available reading of it.
+    this.times = relativeTimes(frames);
+    this.spanMs = this.times ? this.times[this.times.length - 1] : 0;
+    this.elapsedMs = 0;
   }
 
-  step() {
+  step(dtMs) {
     if (this.exhausted) {
       return null;
     }
 
+    return this.times ? this.stepByClock(dtMs) : this.stepByIndex();
+  }
+
+  /** One frame per call: the log has no timestamps to pace it by. */
+  stepByIndex() {
     if (this.index >= this.frames.length) {
       if (!this.loop) {
         this.exhausted = true;
@@ -186,21 +211,76 @@ class FrameLogSource {
       this.index = 0;
     }
 
-    const frame = this.frames[this.index++];
-
-    // Physical channels only — see the note on identity fields at the top.
-    return {
-      lat: frame.lat,
-      lon: frame.lon,
-      speedKmh: frame.speed,
-      rpm: frame.rpm,
-      gLat: frame.gx,
-      gLon: frame.gy,
-      gVert: frame.gz,
-      lap: frame.lap,
-      lapMs: frame.lapMs,
-    };
+    return toSample(this.frames[this.index++]);
   }
+
+  stepByClock(dtMs) {
+    if (this.elapsedMs > this.spanMs) {
+      if (!this.loop) {
+        this.exhausted = true;
+        return null;
+      }
+      this.elapsedMs -= this.spanMs;
+      this.index = 0;
+    }
+
+    // Skip every frame the clock has gone past, so a log recorded faster than
+    // the publisher's tick is decimated rather than stretched.
+    while (
+      this.index + 1 < this.frames.length &&
+      this.times[this.index + 1] <= this.elapsedMs
+    ) {
+      this.index++;
+    }
+
+    const frame = this.frames[this.index];
+    this.elapsedMs += dtMs;
+
+    return toSample(frame);
+  }
+}
+
+/**
+ * Each frame's offset from the first, in ms, or null if the log has no clock.
+ *
+ * `mono` is the field the Pi mints for exactly this purpose and is preferred:
+ * `ts` is wall clock from a device with no RTC, and can step. Either way the
+ * series has to be non-decreasing and cover some span, or it is not a clock —
+ * a log written by a test fixture routinely has neither field, and falling back
+ * is better than pacing off a fabricated one.
+ */
+function relativeTimes(frames) {
+  for (const field of ['mono', 'ts']) {
+    if (!frames.every((frame) => Number.isFinite(frame?.[field]))) {
+      continue;
+    }
+
+    const base = frames[0][field];
+    const times = frames.map((frame) => frame[field] - base);
+
+    const monotonic = times.every((t, i) => i === 0 || t >= times[i - 1]);
+    if (monotonic && times[times.length - 1] > 0) {
+      return times;
+    }
+  }
+
+  return null;
+}
+
+/** One wire frame as the publisher's sample shape. */
+function toSample(frame) {
+  // Physical channels only — see the note on identity fields at the top.
+  return {
+    lat: frame.lat,
+    lon: frame.lon,
+    speedKmh: frame.speed,
+    rpm: frame.rpm,
+    gLat: frame.gx,
+    gLon: frame.gy,
+    gVert: frame.gz,
+    lap: frame.lap,
+    lapMs: frame.lapMs,
+  };
 }
 
 /**
@@ -263,7 +343,7 @@ function sampleAlongLap(lap, lapMs, lapNumber, dtMs, state) {
   const segmentM = lap.cumulative[i] - lap.cumulative[i - 1];
   const speedKmh = (segmentM / (span / 1000)) * 3.6;
 
-  const gLon = ((speedKmh - state.previousSpeedKmh) / 3.6 / (dtMs / 1000)) / G;
+  const gLon = (speedKmh - state.previousSpeedKmh) / 3.6 / (dtMs / 1000) / G;
   state.previousSpeedKmh = speedKmh;
 
   return {

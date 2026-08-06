@@ -1,6 +1,13 @@
 import { AnalysisSample } from './analysis.types';
 import { LapDeltaPointDto, LapTracePointDto } from './dto/lap-trace.dto';
-import { stepM } from './lap-distance';
+import { toLapPoints } from './lap-distance';
+import { isPositioned, lerpChannel, round } from './sample-math';
+
+/** The interpolated instants a lap opened and closed at, in epoch ms. */
+export interface LapBounds {
+  startMs: number;
+  endMs: number;
+}
 
 /**
  * A lap's racing line and channels, on a distance axis.
@@ -9,57 +16,118 @@ import { stepM } from './lap-distance';
  * position within a bucket, which puts the car somewhere it never was — fine
  * for a temperature chart, fatal for a racing line, which is exactly the thing
  * that must not be smoothed towards the inside of every corner.
+ *
+ * `bounds` are the lap's crossing instants. With them — and the bracketing
+ * fixes `AnalysisSamplesRepository.findLapWindow` returns — the trace opens and
+ * closes *on the start/finish line* rather than at the nearest stored sample.
+ * That is what makes two laps' distance axes share an origin, and so what makes
+ * `compareLaps` measure driving rather than sampling phase. It is also what
+ * makes the last point's `elapsedMs` agree with the lap's own `lapMs`.
+ *
+ * The distance axis comes from `toLapPoints`, not from a loop of its own: the
+ * number a braking point was stored at and the number the map draws it at have
+ * to be the same number, and the only way to be sure of that is for there to be
+ * one implementation.
  */
 export function buildLapTrace(
   samples: AnalysisSample[],
   maxPoints: number,
+  bounds: LapBounds,
 ): LapTracePointDto[] {
-  const located = samples.filter(
-    (sample) => Number.isFinite(sample.lat) && Number.isFinite(sample.lon),
-  );
+  const located = anchorToLap(samples.filter(isPositioned), bounds);
 
   if (!located.length) {
     return [];
   }
 
   const originMs = located[0].time.getTime();
-  const points: LapTracePointDto[] = [];
+  // Index-parallel to `located` — both drop exactly the fixes with no position,
+  // and `located` has none left.
+  const axis = toLapPoints(located);
 
-  for (const sample of located) {
-    const previous = points[points.length - 1];
-    const timeMs = sample.time.getTime();
-
-    points.push({
-      distM: previous
-        ? previous.distM +
-          stepM(
-            {
-              timeMs: originMs + previous.elapsedMs,
-              lat: previous.lat,
-              lon: previous.lon,
-              speedKmh: previous.speedKmh,
-            },
-            {
-              timeMs,
-              lat: sample.lat,
-              lon: sample.lon,
-              speedKmh: sample.speedKmh,
-            },
-          )
-        : 0,
-      elapsedMs: timeMs - originMs,
-      lat: sample.lat,
-      lon: sample.lon,
-      speedKmh: sample.speedKmh ?? null,
-      rpm: sample.rpm ?? null,
-      coolantC: sample.coolantC ?? null,
-      oilC: sample.oilC ?? null,
-      gLat: sample.gLat ?? null,
-      gLon: sample.gLon ?? null,
-    });
-  }
+  const points = located.map((sample, i) => ({
+    distM: axis[i].distM,
+    elapsedMs: sample.time.getTime() - originMs,
+    lat: sample.lat,
+    lon: sample.lon,
+    speedKmh: sample.speedKmh ?? null,
+    rpm: sample.rpm ?? null,
+    coolantC: sample.coolantC ?? null,
+    oilC: sample.oilC ?? null,
+    gLat: sample.gLat ?? null,
+    gLon: sample.gLon ?? null,
+  }));
 
   return decimateByDistance(points, maxPoints);
+}
+
+/**
+ * Clip a window of samples to a lap, with a synthesized fix at each crossing.
+ *
+ * The same anchor `LapSegmenter` put on both sides of the line when it derived
+ * the lap, rebuilt here from the stored samples. Reconstructed rather than
+ * persisted because it is a function of rows that already exist: storing it
+ * would add a second copy of the trace's endpoints that could drift from them.
+ */
+function anchorToLap(
+  located: AnalysisSample[],
+  { startMs, endMs }: LapBounds,
+): AnalysisSample[] {
+  const inside = located.filter((sample) => {
+    const timeMs = sample.time.getTime();
+    return timeMs >= startMs && timeMs <= endMs;
+  });
+
+  // A window with no fix either side of the crossing — the first lap of a
+  // session that began on the line, or a gap in the data — anchors on what it
+  // has. Better a trace one sample short than no trace at all.
+  const head = interpolateAt(located, startMs);
+  const tail = interpolateAt(located, endMs);
+
+  return [...(head ? [head] : []), ...inside, ...(tail ? [tail] : [])];
+}
+
+/**
+ * A synthesized sample at `atMs`, interpolated between the two fixes that
+ * bracket it.
+ *
+ * Null when nothing brackets it, and null when a real sample already sits on
+ * the instant — that one is inside the lap and adding a copy of it would put a
+ * zero-length step at the head of the distance axis.
+ */
+function interpolateAt(
+  located: AnalysisSample[],
+  atMs: number,
+): AnalysisSample | null {
+  for (let i = 0; i < located.length - 1; i++) {
+    const aMs = located[i].time.getTime();
+    const bMs = located[i + 1].time.getTime();
+
+    if (aMs === atMs || bMs === atMs) {
+      return null;
+    }
+    if (aMs > atMs || bMs < atMs) {
+      continue;
+    }
+
+    const a = located[i];
+    const b = located[i + 1];
+    const t = (atMs - aMs) / (bMs - aMs);
+
+    return {
+      time: new Date(atMs),
+      lat: a.lat + t * (b.lat - a.lat),
+      lon: a.lon + t * (b.lon - a.lon),
+      speedKmh: lerpChannel(a.speedKmh, b.speedKmh, t),
+      rpm: lerpChannel(a.rpm, b.rpm, t),
+      coolantC: lerpChannel(a.coolantC, b.coolantC, t),
+      oilC: lerpChannel(a.oilC, b.oilC, t),
+      gLat: lerpChannel(a.gLat, b.gLat, t),
+      gLon: lerpChannel(a.gLon, b.gLon, t),
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -187,8 +255,3 @@ function sampleAtDistance(
         : round(from.speedKmh + t * (to.speedKmh - from.speedKmh), 2),
   };
 }
-
-const round = (value: number, places: number): number => {
-  const scale = 10 ** places;
-  return Math.round(value * scale) / scale;
-};

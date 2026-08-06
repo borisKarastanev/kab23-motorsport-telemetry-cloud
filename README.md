@@ -140,7 +140,12 @@ GPS_NOISE_M=0.7   GPS jitter, 1σ per axis. Non-zero by default, so the
 --replay <file>   replay a recorded drive instead: a JSONL frame log, or a dash
                   session record (`{lapMs, lapPaths}`). See scripts/lib/replay.js
                   for what each format can and cannot reproduce — a dash record
-                  carries geometry only, so its channels are reconstructed.
+                  carries geometry only, so its channels are reconstructed. A
+                  frame log is replayed on its own `mono`/`ts` clock, so a 25 Hz
+                  recording keeps its duration through the 10 Hz publisher. The
+                  run ends and the session closes when the recording does.
+--replay-loop     repeat the recording rather than ending with it, for driving a
+                  long run off a short record.
 ```
 
 ## Device credentials

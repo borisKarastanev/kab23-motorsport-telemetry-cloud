@@ -1,7 +1,13 @@
 import { AnalysisSample, DerivedLap, Gate, LapPoint } from './analysis.types';
 import { detectBrakingPoints } from './braking-points';
-import { MIN_LAP_MS, findGateCrossing } from './gate-crossing';
+import {
+  MIN_LAP_MS,
+  ProjectedGate,
+  findGateCrossing,
+  projectGate,
+} from './gate-crossing';
 import { stepM } from './lap-distance';
+import { isPositioned, lerpChannel } from './sample-math';
 import { DEFAULT_SECTOR_COUNT, sectorTimes } from './sectors';
 
 /**
@@ -32,10 +38,11 @@ export class LapSegmenter {
   private lapNumber = 0;
   private points: LapPoint[] | null = null;
 
-  constructor(
-    private readonly gate: Gate,
-    options: { sectorCount?: number } = {},
-  ) {
+  /** The gate in local metres. Constant for the run, so projected once here. */
+  private readonly gate: ProjectedGate;
+
+  constructor(gate: Gate, options: { sectorCount?: number } = {}) {
+    this.gate = projectGate(gate);
     this.sectorCount = options.sectorCount ?? DEFAULT_SECTOR_COUNT;
   }
 
@@ -189,23 +196,9 @@ export function segmentLaps(
   return new LapSegmenter(gate, options).pushAll(samples).result();
 }
 
-const isPositioned = (sample: AnalysisSample): boolean =>
-  Number.isFinite(sample?.lat) && Number.isFinite(sample?.lon);
-
 const toFix = (sample: AnalysisSample) => ({
   timeMs: sample.time.getTime(),
   lat: sample.lat,
   lon: sample.lon,
   speedKmh: sample.speedKmh,
 });
-
-/**
- * A channel's value at the crossing. Both endpoints must be present — a
- * half-known interval interpolates to a fabricated number, and a missing
- * channel is better carried through as missing.
- */
-const lerpChannel = (
-  a: number | undefined,
-  b: number | undefined,
-  t: number,
-): number | undefined => (a == null || b == null ? undefined : a + t * (b - a));

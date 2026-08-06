@@ -4,6 +4,7 @@ import {
   MAX_FIX_GAP_MS,
   STATIONARY_SPEED_KMH,
   findGateCrossing,
+  projectGate,
 } from './gate-crossing';
 import { localFrame } from './geo';
 
@@ -15,19 +16,26 @@ import { localFrame } from './geo';
  * one degree would pass a test that a 17.7 m line at latitude 42 fails, because
  * the whole risk in this maths is precision at track scale.
  */
-const GATE: Gate = {
+const RAW_GATE: Gate = {
   lat1: 42.3411288,
   lon1: 24.737,
   lat2: 42.3409841,
   lon2: 24.7369101,
 };
 
+/**
+ * `findGateCrossing` takes the gate already projected — it runs once per
+ * consecutive pair of fixes, and the projection depends on nothing but the
+ * gate. `LapSegmenter` does this once in its constructor.
+ */
+const GATE = projectGate(RAW_GATE);
+
 const frame = localFrame(
-  (GATE.lat1 + GATE.lat2) / 2,
-  (GATE.lon1 + GATE.lon2) / 2,
+  (RAW_GATE.lat1 + RAW_GATE.lat2) / 2,
+  (RAW_GATE.lon1 + RAW_GATE.lon2) / 2,
 );
-const A = frame.toLocal(GATE.lat1, GATE.lon1);
-const B = frame.toLocal(GATE.lat2, GATE.lon2);
+const A = frame.toLocal(RAW_GATE.lat1, RAW_GATE.lon1);
+const B = frame.toLocal(RAW_GATE.lat2, RAW_GATE.lon2);
 const along = { x: B.x - A.x, y: B.y - A.y };
 const gateLenM = Math.hypot(along.x, along.y);
 const unit = { x: along.x / gateLenM, y: along.y / gateLenM };
@@ -162,13 +170,13 @@ describe('findGateCrossing', () => {
 
   it('rejects a degenerate gate', () => {
     const point: Gate = {
-      lat1: GATE.lat1,
-      lon1: GATE.lon1,
-      lat2: GATE.lat1,
-      lon2: GATE.lon1,
+      lat1: RAW_GATE.lat1,
+      lon1: RAW_GATE.lon1,
+      lat2: RAW_GATE.lat1,
+      lon2: RAW_GATE.lon1,
     };
 
-    expect(findGateCrossing(...path(), point)).toBeNull();
+    expect(findGateCrossing(...path(), projectGate(point))).toBeNull();
   });
 
   it('rejects fixes too far apart in time to bridge', () => {

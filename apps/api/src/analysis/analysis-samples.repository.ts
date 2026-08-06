@@ -20,6 +20,23 @@ import { AnalysisSample } from './analysis.types';
  * This class does no authorization. `AnalysisService` scopes the session before
  * every call, and is the only caller.
  */
+/**
+ * The projection every read here shares.
+ *
+ * `::float` on the real/double columns: node-postgres hands `numeric` back as a
+ * string to preserve precision, and a lat arriving as "42.34" would make every
+ * distance NaN rather than fail loudly.
+ */
+const SAMPLE_COLUMNS = `time,
+              lat::float              AS lat,
+              lon::float              AS lon,
+              speed_kmh::float        AS "speedKmh",
+              rpm,
+              coolant_c::float        AS "coolantC",
+              oil_c::float            AS "oilC",
+              g_lat::float            AS "gLat",
+              g_lon::float            AS "gLon"`;
+
 @Injectable()
 export class AnalysisSamplesRepository {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
@@ -37,23 +54,60 @@ export class AnalysisSamplesRepository {
     to: Date,
   ): Promise<AnalysisSample[]> {
     return this.dataSource.query(
-      // ::float on the real/double columns: node-postgres hands `numeric` back
-      // as a string to preserve precision, and a lat arriving as "42.34" would
-      // make every distance NaN rather than fail loudly.
-      `SELECT time,
-              lat::float              AS lat,
-              lon::float              AS lon,
-              speed_kmh::float        AS "speedKmh",
-              rpm,
-              coolant_c::float        AS "coolantC",
-              oil_c::float            AS "oilC",
-              g_lat::float            AS "gLat",
-              g_lon::float            AS "gLon"
+      `SELECT ${SAMPLE_COLUMNS}
          FROM telemetry_samples
         WHERE session_id = $1
           AND time >= $2
           AND time <= $3
         ORDER BY time, seq`,
+      [sessionId, from, to],
+    );
+  }
+
+  /**
+   * A lap's samples **plus the one fix either side of it**.
+   *
+   * `Lap.startedAt` and `Lap.endedAt` are the *interpolated* instants the car
+   * crossed the line, so by construction they fall strictly between two stored
+   * samples and `findRange` would return neither of the fixes that bracket
+   * them. The trace built from that starts at the first sample *after* the
+   * line — up to a fix interval, ~5 m at 185 km/h, down the road — which is
+   * exactly the phantom delta `LapSegmenter`'s anchoring exists to remove: two
+   * laps would get distance axes with different physical origins, and
+   * `compareLaps` aligns on that axis.
+   *
+   * So hand the bracketing fixes back too and let `buildLapTrace` interpolate
+   * the endpoints onto the line itself.
+   */
+  findLapWindow(
+    sessionId: string,
+    from: Date,
+    to: Date,
+  ): Promise<AnalysisSample[]> {
+    // `seq` is projected here and nowhere else: the outer ORDER BY needs it to
+    // break ties within a millisecond, and one lap's worth of rows can carry it
+    // for free. `findRange` reads up to MAX_ANALYSIS_SAMPLES rows and would be
+    // paying for a column nothing reads, which is why it is not in
+    // SAMPLE_COLUMNS.
+    return this.dataSource.query(
+      `SELECT * FROM (
+                (SELECT ${SAMPLE_COLUMNS}, seq
+                   FROM telemetry_samples
+                  WHERE session_id = $1 AND time < $2
+                  ORDER BY time DESC, seq DESC
+                  LIMIT 1)
+                UNION ALL
+                (SELECT ${SAMPLE_COLUMNS}, seq
+                   FROM telemetry_samples
+                  WHERE session_id = $1 AND time >= $2 AND time <= $3)
+                UNION ALL
+                (SELECT ${SAMPLE_COLUMNS}, seq
+                   FROM telemetry_samples
+                  WHERE session_id = $1 AND time > $3
+                  ORDER BY time, seq
+                  LIMIT 1)
+              ) AS w
+        ORDER BY w.time, w.seq`,
       [sessionId, from, to],
     );
   }

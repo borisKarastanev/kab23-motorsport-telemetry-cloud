@@ -58,8 +58,8 @@
     <section class="panel map-panel">
       <div class="map">
         <app-racing-line
-          [points]="tracePoints()"
-          [ghostPoints]="ghostPoints()"
+          [points]="activePoints()"
+          [ghostPoints]="referencePoints()"
           [brakingPoints]="brakingPoints()"
         />
       </div>
