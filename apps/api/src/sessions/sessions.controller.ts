@@ -24,6 +24,7 @@ import { UpdateSessionDto } from './dto/update-session.dto';
 import { QuerySessionsDto } from './dto/query-sessions.dto';
 import { QueryTelemetryDto } from './dto/query-telemetry.dto';
 import { TelemetryPointDto } from './dto/telemetry-point.dto';
+import { SessionListItemDto } from './dto/session-list-item.dto';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard)
@@ -43,7 +44,7 @@ export class SessionsController {
   findAll(
     @AuthenticatedUser() user: User,
     @Query() query: QuerySessionsDto,
-  ): Promise<Session[]> {
+  ): Promise<SessionListItemDto[]> {
     return this.sessionsService.findAll(user, query);
   }
 

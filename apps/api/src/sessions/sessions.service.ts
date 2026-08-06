@@ -19,6 +19,8 @@ import {
 } from './dto/query-telemetry.dto';
 import { TelemetryRepository } from './telemetry.repository';
 import { TelemetryPointDto } from './dto/telemetry-point.dto';
+import { LapSummaryRepository } from './lap-summary.repository';
+import { SessionListItemDto } from './dto/session-list-item.dto';
 
 @Injectable()
 export class SessionsService {
@@ -27,6 +29,7 @@ export class SessionsService {
     private readonly carsService: CarsService,
     private readonly teamsService: TeamsService,
     private readonly telemetryRepository: TelemetryRepository,
+    private readonly lapSummaryRepository: LapSummaryRepository,
   ) {}
 
   async create(
@@ -91,7 +94,17 @@ export class SessionsService {
     return requestedDriverId;
   }
 
-  async findAll(user: User, query: QuerySessionsDto): Promise<Session[]> {
+  async findAll(
+    user: User,
+    query: QuerySessionsDto,
+  ): Promise<SessionListItemDto[]> {
+    return this.withLapSummary(await this.findVisible(user, query));
+  }
+
+  private async findVisible(
+    user: User,
+    query: QuerySessionsDto,
+  ): Promise<Session[]> {
     const { carId, teamId, status } = query;
 
     // Narrowing to one car authorizes that car directly; the caller's unrelated
@@ -117,6 +130,30 @@ export class SessionsService {
 
     const carIds = await this.carsService.getVisibleCarIds(user);
     return this.sessionsRepository.findVisible(user.id, carIds, status);
+  }
+
+  /**
+   * Attach each session's lap count and best lap.
+   *
+   * One grouped query for the whole page — the sessions have already been
+   * scoped, so the ids handed over are exactly the ones the caller may see.
+   * Zero and null for a session nobody has opened yet: derivation is lazy, so
+   * "no laps" and "not analyzed" are the same state, and the list says so
+   * rather than guessing.
+   */
+  private async withLapSummary(
+    sessions: Session[],
+  ): Promise<SessionListItemDto[]> {
+    const summaries = await this.lapSummaryRepository.findBySessions(
+      sessions.map((session) => session.id),
+    );
+
+    return sessions.map((session) =>
+      Object.assign(session as SessionListItemDto, {
+        lapCount: summaries.get(session.id)?.lapCount ?? 0,
+        bestLapMs: summaries.get(session.id)?.bestLapMs ?? null,
+      }),
+    );
   }
 
   async findOne(user: User, sessionId: string): Promise<Session> {
@@ -189,12 +226,40 @@ export class SessionsService {
     );
   }
 
+  /**
+   * Stamp the moment the lap derivation last ran.
+   *
+   * Exposed for `AnalysisService`, which owns when that happens. Unauthorized
+   * on purpose: it is only ever reached through a session the caller has
+   * already been scoped to, and adding a check here would be a second predicate
+   * to keep in step with `requireReadableSession` rather than a second defence.
+   *
+   * There is deliberately no "un-analyze": a recompute swaps the laps and the
+   * stamp forward together, so a session never sits in a state where it has
+   * been analyzed but says it has not.
+   */
+  async setAnalyzedAt(sessionId: string, analyzedAt: Date): Promise<void> {
+    await this.sessionsRepository.findOneAndUpdate(
+      { id: sessionId },
+      {
+        analyzedAt,
+      },
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Scoping
   // ---------------------------------------------------------------------------
 
-  /** The driver's own run, or any session on a car the caller can see. */
-  private async requireReadableSession(
+  /**
+   * The driver's own run, or any session on a car the caller can see.
+   *
+   * Public because `AnalysisService` is a second module reading this session's
+   * data, and it must go through *this* check rather than write its own. GPS
+   * traces are a named driver's location: a second, independently maintained
+   * scoping predicate is a second chance to get one wrong.
+   */
+  async requireReadableSession(
     user: User,
     sessionId: string,
   ): Promise<Session> {

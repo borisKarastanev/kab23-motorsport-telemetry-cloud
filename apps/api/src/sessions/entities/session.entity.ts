@@ -65,4 +65,20 @@ export class Session extends AbstractEntity<Session> {
    */
   @Column({ type: 'bigint', nullable: true })
   deviceMonoStartMs?: number;
+
+  /**
+   * When the lap derivation last ran over this session — the flag that makes
+   * `GET /sessions/:id/laps` lazy.
+   *
+   * Null means "not derived yet", so the first read of a completed session
+   * segments it and writes the `laps` rows. Set **last**, after those rows are
+   * committed, so a crash mid-derivation leaves the session looking underived
+   * and the next read simply tries again. See `AnalysisService`.
+   *
+   * A recompute (a corrected gate, a device disagreeing with us) replaces the
+   * laps and moves this forward in one step — it never clears either, or a
+   * re-derivation that could not run would destroy the answer already held.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  analyzedAt?: Date;
 }

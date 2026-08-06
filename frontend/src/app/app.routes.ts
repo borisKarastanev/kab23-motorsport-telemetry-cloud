@@ -22,6 +22,22 @@ export const routes: Routes = [
         (m) => m.LiveTelemetry,
       ),
   },
+  // `sessions/:id` before `sessions`: the router takes the first full match,
+  // and both are static prefixes, so ordering is what keeps them distinct.
+  {
+    path: 'sessions/:id',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/sessions/session-analysis').then(
+        (m) => m.SessionAnalysis,
+      ),
+  },
+  {
+    path: 'sessions',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/sessions/sessions').then((m) => m.Sessions),
+  },
   {
     path: '',
     canActivate: [authGuard],

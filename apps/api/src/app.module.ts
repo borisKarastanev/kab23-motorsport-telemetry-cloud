@@ -6,6 +6,8 @@ import { UsersModule } from './users/users.module';
 import { TeamsModule } from './teams/teams.module';
 import { CarsModule } from './cars/cars.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { TracksModule } from './tracks/tracks.module';
+import { AnalysisModule } from './analysis/analysis.module';
 import { LiveTelemetryModule } from './live-telemetry/live-telemetry.module';
 import { HealthController } from './health/health.controller';
 
@@ -19,6 +21,8 @@ import { HealthController } from './health/health.controller';
     TeamsModule,
     CarsModule,
     SessionsModule,
+    TracksModule,
+    AnalysisModule,
     LiveTelemetryModule,
   ],
   controllers: [HealthController],

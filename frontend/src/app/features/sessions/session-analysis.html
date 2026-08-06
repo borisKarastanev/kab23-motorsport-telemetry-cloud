@@ -1,0 +1,110 @@
+<header class="topbar">
+  <a class="brand" routerLink="/">Motorsport Telemetry</a>
+  <a class="back" routerLink="/sessions">← Sessions</a>
+  <span class="spacer"></span>
+
+  @if (analysis.analyzedAt(); as at) {
+    <span class="pill connected">Analyzed</span>
+  } @else {
+    <span class="pill">Not analyzed</span>
+  }
+
+  <button
+    type="button"
+    class="ghost-button"
+    [disabled]="recomputing()"
+    (click)="recompute()"
+  >
+    {{ recomputing() ? 'Re-analyzing…' : 'Re-analyze' }}
+  </button>
+</header>
+
+<main class="content">
+  @if (analysis.loading()) {
+    <p class="muted">Deriving laps…</p>
+  } @else if (analysis.error()) {
+    <p class="error">Could not load this session.</p>
+  } @else if (emptyMessage(); as message) {
+    <section class="panel empty">
+      <h1>No laps</h1>
+      <p class="muted">{{ message }}</p>
+      @if (analysis.reason() === 'no-crossings') {
+        <p class="muted">
+          A corrected start/finish line is picked up on the next load — there is
+          nothing to undo first.
+        </p>
+      }
+    </section>
+  } @else {
+    @if (recomputeError(); as message) {
+      <p class="error">{{ message }}</p>
+    }
+
+    <section class="panel head">
+      @if (headline(); as h) {
+        <div class="headline">
+          <span class="lap">{{ activeLabel() }}</span>
+          <span class="time">{{ h.time }}</span>
+          @if (h.isBest) {
+            <span class="pill connected">Fastest</span>
+          }
+          @if (h.delta) {
+            <span class="delta">{{ h.delta }} vs lap {{ h.referenceLap }}</span>
+          }
+        </div>
+      }
+    </section>
+
+    <section class="panel map-panel">
+      <div class="map">
+        <app-racing-line
+          [points]="activePoints()"
+          [ghostPoints]="referencePoints()"
+          [brakingPoints]="brakingPoints()"
+        />
+      </div>
+      <footer class="map-key muted">
+        <span><span class="swatch slow"></span>slower</span>
+        <span><span class="swatch fast"></span>faster</span>
+        <span><span class="dot brake"></span>braking point</span>
+        @if (analysis.referenceLap(); as reference) {
+          <span><span class="swatch ghost"></span>lap {{ reference }}</span>
+        }
+      </footer>
+    </section>
+
+    <section class="panel">
+      <app-lap-table
+        [laps]="analysis.laps()"
+        [activeLap]="analysis.activeLap()"
+        [referenceLap]="analysis.referenceLap()"
+        (select)="analysis.select($event)"
+        (compare)="analysis.toggleCompare($event)"
+      />
+    </section>
+
+    @if (deltaSeries().length) {
+      <section class="panel">
+        <!-- includeZero off: zero is guaranteed in range here, and forcing the
+             axis wider would flatten exactly the small differences this chart
+             exists to show. -->
+        <app-line-chart
+          title="Time delta"
+          unit=" s"
+          [series]="deltaSeries()"
+          [includeZero]="false"
+        />
+        <p class="muted note">
+          Above the line, lap {{ analysis.referenceLap() }} is behind lap
+          {{ analysis.activeLap() }}. Aligned on distance, not time.
+        </p>
+      </section>
+    }
+
+    <section class="panel charts">
+      <app-line-chart title="Speed" unit=" km/h" [series]="speedSeries()" />
+      <app-line-chart title="RPM" [series]="rpmSeries()" />
+      <app-line-chart title="Temperatures" unit=" °C" [series]="tempSeries()" />
+    </section>
+  }
+</main>
