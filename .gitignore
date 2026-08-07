@@ -3,7 +3,10 @@
 /coverage
 *.log
 .env
-.env.local
+# Every .env variant — .env.local, .env.rehearsal, .env.production — except the
+# committed placeholder file. Mirrors .dockerignore, which already had this.
+.env.*
+!.env.example
 *.tsbuildinfo
 .DS_Store
 frontend/node_modules
