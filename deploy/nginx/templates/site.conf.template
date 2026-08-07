@@ -52,6 +52,18 @@ server {
     ssl_certificate     /etc/letsencrypt/live/${PUBLIC_DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${PUBLIC_DOMAIN}/privkey.pem;
 
+    # The nginx base image ships gzip commented out. This stack is built for
+    # pit-wall laptops on tethered LTE, and the Angular bundle is 401 KB raw
+    # against 126 KB gzipped — 275 KB of avoidable transfer on every cold load,
+    # plus every JSON body proxied through /api/ (telemetry responses are large
+    # and highly compressible).
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/javascript application/json
+               application/manifest+json image/svg+xml;
+
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
     ssl_session_cache shared:SSL:10m;
@@ -93,6 +105,18 @@ server {
         # Frames are small and latency is the point — p50 delivery is ~1 ms and
         # buffering here would spend that many times over.
         proxy_buffering off;
+    }
+
+    # Content-hashed by Angular's `outputHashing: all`, so these filenames are
+    # immutable by construction and a conditional request for them can only ever
+    # come back 304. Without this every reload costs ~10 revalidations over TLS.
+    # index.html is deliberately NOT matched: it is the one unhashed file, and
+    # caching it would pin a browser to an old bundle across a deploy.
+    location ~* \.(?:js|css|woff2?|svg|png|jpg|ico)$ {
+        root /usr/share/nginx/html;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
     }
 
     location / {

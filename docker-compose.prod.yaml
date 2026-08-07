@@ -13,6 +13,15 @@
 # then `up` — certs first, because mosquitto.prod.conf's 8883 listener will not
 # start without them. The `migrate` service runs the schema before api or ingest.
 
+# Every long-running service gets a log cap. Without one, a container's JSON log
+# grows unbounded and fills the VPS disk — which on this stack takes the database
+# down with it. Anchored rather than repeated so a new service cannot quietly
+# omit it, which is exactly what had happened to api/telemetry-ingest/web.
+x-logging: &logging
+  options:
+    max-size: 10m
+    max-file: '3'
+
 services:
   # ---------------------------------------------------------------- data ----
   timescaledb:
@@ -30,14 +39,14 @@ services:
       - ./db/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
-      interval: 10s
+      # 3s, not 10s: the first probe only fires after one full interval, and
+      # migrate -> api -> web all queue behind this on a cold start. Postgres is
+      # typically accepting connections in ~2s; retries cover a slow initdb.
+      interval: 3s
       timeout: 5s
-      retries: 10
+      retries: 30
       start_period: 30s
-    logging:
-      options:
-        max-size: 10m
-        max-file: '3'
+    logging: *logging
 
   redis:
     image: redis:7-alpine
@@ -56,9 +65,9 @@ services:
     # reconstructible from the hypertable, and nothing may be only here.
     healthcheck:
       test: ['CMD-SHELL', 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping']
-      interval: 10s
+      interval: 3s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   # -------------------------------------------------------------- broker ----
   mosquitto:
@@ -78,10 +87,7 @@ services:
       # work: privkey.pem is root-owned 0600 and mosquitto runs as uid 1883.
       - ./deploy/mosquitto/certs:/mosquitto/certs:ro
       - mosquitto_data:/mosquitto/data
-    logging:
-      options:
-        max-size: 10m
-        max-file: '3'
+    logging: *logging
 
   # ------------------------------------------------------------ schema ------
   # One-shot. Runs the compiled migrations and exits; api and telemetry-ingest
@@ -130,13 +136,10 @@ services:
     # No published port: nginx is the only thing that reaches this, over the
     # compose network.
     healthcheck:
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
-        ]
+      # busybox wget, not `node -e`: node:24-alpine ships wget, and spawning a
+      # Node process every interval costs ~30 ms CPU and a ~40 MB transient RSS
+      # spike for a check that is one HTTP GET. Matches what `web` already does.
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:3000/health']
       interval: 15s
       timeout: 5s
       retries: 5
@@ -148,6 +151,7 @@ services:
         condition: service_healthy
       mosquitto:
         condition: service_started
+    logging: *logging
 
   telemetry-ingest:
     build:
@@ -181,6 +185,7 @@ services:
         condition: service_started
       timescaledb:
         condition: service_healthy
+    logging: *logging
 
   # ---------------------------------------------------------------- edge ----
   # The Angular bundle plus TLS termination and the API/WebSocket proxy.
@@ -209,6 +214,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging: *logging
     depends_on:
       api:
         # Deliberately service_started, NOT service_healthy. nginx is the edge:

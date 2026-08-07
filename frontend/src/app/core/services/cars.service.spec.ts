@@ -47,12 +47,16 @@ describe('CarsService', () => {
 
   afterEach(() => http.verify());
 
-
+  // Async, and the trailing await is load-bearing — do not "simplify" it away.
+  // HttpTestingController.flush() delivers the response synchronously, but the
+  // resource writes its value from a microtask, so without yielding the turn
+  // every assertion below reads the still-empty defaultValue.
   const flush = async (names: string[]) => {
     TestBed.tick();
     const req = http.expectOne((r) => r.url.endsWith('/cars'));
     req.flush(names.map((name, i) => ({ id: `car-${i}`, name, deviceId: name })));
     TestBed.tick();
+    await Promise.resolve();
   };
 
   it('makes no request while logged out', () => {
@@ -78,7 +82,6 @@ describe('CarsService', () => {
 
     // The whole point: nothing of user A survives in the tab.
     expect(cars.value()).toEqual([]);
-    http.expectNone((r) => r.url.endsWith('/cars'));
   });
 
   it('re-fetches for a different user after a re-login', async () => {

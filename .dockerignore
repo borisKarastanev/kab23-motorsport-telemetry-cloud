@@ -10,9 +10,12 @@ frontend
 .env.*
 !.env.example
 
-# `*.pem` alone is not enough: a .dockerignore `*` does not cross a `/`, so it
-# matches only the context root. The TLS material under deploy/ needs both the
-# recursive form and the directory itself.
+# A `*` does not cross a `/`, so `*.pem` matches only the context root — the TLS
+# material under deploy/ needs the `**/` form. The bare patterns are kept as well
+# even though `**/` also matches at the root: this is the one exclusion whose
+# failure mode is a private key baked into an image layer that survives deleting
+# the file, and two redundant lines are a trivial price for not having to be
+# right about one matcher's semantics.
 *.pem
 *.key
 *.p12

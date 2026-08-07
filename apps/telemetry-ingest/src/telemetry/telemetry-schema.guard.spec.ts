@@ -10,6 +10,13 @@ describe('TelemetrySchemaGuard', () => {
     };
   };
 
+  /**
+   * The `timescaledb_information.hypertables` assertion is the point, not an
+   * incidental detail: a plain table of the right shape accepts every insert and
+   * looks healthy while silently giving up chunking, compression and the
+   * time-series query plans the analysis endpoints assume. `to_regclass` would
+   * not catch that, so "the table exists" is not the question worth asking.
+   */
   it('starts when the hypertable is registered with Timescale', async () => {
     const { guard, query } = guardOver([{ '?column?': 1 }]);
 
@@ -17,6 +24,9 @@ describe('TelemetrySchemaGuard', () => {
     expect(query).toHaveBeenCalledWith(expect.any(String), [
       'telemetry_samples',
     ]);
+    expect(query.mock.calls[0][0]).toContain(
+      'timescaledb_information.hypertables',
+    );
   });
 
   it('refuses to start when the migration has not been run', async () => {
@@ -25,22 +35,5 @@ describe('TelemetrySchemaGuard', () => {
     // The message has to name the fix: this fires on a deploy, in front of
     // somebody who is not looking at this file.
     await expect(guard.onModuleInit()).rejects.toThrow(/migration:run/);
-  });
-
-  /**
-   * The whole reason this queries `timescaledb_information.hypertables` rather
-   * than `to_regclass('telemetry_samples')`. A plain table of the right shape
-   * accepts every insert and looks healthy while silently giving up chunking,
-   * compression and the time-series query plans the analysis endpoints assume —
-   * so "the table exists" is not the question worth asking.
-   */
-  it('asks Timescale, not the catalogue, whether the table is a hypertable', async () => {
-    const { guard, query } = guardOver([{ '?column?': 1 }]);
-
-    await guard.onModuleInit();
-
-    expect(query.mock.calls[0][0]).toContain(
-      'timescaledb_information.hypertables',
-    );
   });
 });

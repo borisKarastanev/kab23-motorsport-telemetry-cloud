@@ -1,20 +1,4 @@
-import { corsOptionsFor, parseCorsOrigins } from './cors-origin';
-
-describe('parseCorsOrigins', () => {
-  it('splits and trims a comma-separated list', () => {
-    expect(parseCorsOrigins('http://a.test, https://b.test')).toEqual([
-      'http://a.test',
-      'https://b.test',
-    ]);
-  });
-
-  it.each([undefined, '', '  ', ',,'])(
-    'treats %p as no configured origins',
-    (value) => {
-      expect(parseCorsOrigins(value)).toEqual([]);
-    },
-  );
-});
+import { corsOptionsFor } from './cors-origin';
 
 describe('corsOptionsFor', () => {
   it('allowlists the configured origins with credentials', () => {
@@ -22,6 +6,13 @@ describe('corsOptionsFor', () => {
       origin: ['http://localhost:4200'],
       credentials: true,
     });
+  });
+
+  it('splits and trims a comma-separated list', () => {
+    expect(corsOptionsFor('http://a.test, https://b.test').origin).toEqual([
+      'http://a.test',
+      'https://b.test',
+    ]);
   });
 
   /**

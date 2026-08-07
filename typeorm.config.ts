@@ -37,11 +37,7 @@ const databaseSchema = Joi.object({
   DB_DATABASE: configValidationSchema.extract('DB_DATABASE'),
 }).unknown(true);
 
-const { error, value: env } = databaseSchema.validate(process.env);
-
-if (error) {
-  throw new Error(`Migration config is invalid: ${error.message}`);
-}
+const env = Joi.attempt(process.env, databaseSchema, 'Migration config is invalid:');
 
 /**
  * True when this file is running as compiled JavaScript — i.e. inside the
@@ -66,10 +62,16 @@ export const dataSourceOptions: DataSourceOptions = {
     : ['db/migrations/*.ts'],
 
   /**
-   * Entities are only needed by `migration:generate`, which diffs them against
-   * the live schema. `migration:run` never looks at them, so the compiled
-   * production build carries none — that keeps the migrate container free of
-   * the app's `@app/common` path aliases and its whole import graph.
+   * Entities matter to `migration:generate`, which diffs them against the live
+   * schema. `migration:run` does not *use* them, but it does still load them:
+   * `DataSource.initialize()` calls `buildMetadatas()` unconditionally, so in
+   * dev every run compiles these files and the `@app/common` barrel they pull
+   * in — about a second of ts-node on top of its own startup. Tolerable for a
+   * command run by hand.
+   *
+   * The compiled production build carries none, which is what keeps the migrate
+   * container free of the app's `@app/common` path aliases and its whole import
+   * graph — and makes `migration:run` there genuinely free.
    *
    * `apps/telemetry-ingest` is excluded on purpose. `CarRef`/`SessionRef` are
    * thin views of tables `apps/api` owns, and `TelemetrySample` is a hypertable

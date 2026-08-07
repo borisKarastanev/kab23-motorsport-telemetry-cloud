@@ -16,7 +16,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE="docker compose -f docker-compose.prod.yaml"
+# Bare `docker compose`, so COMPOSE_FILE (set per DEPLOY.md §2.2) decides
+# which stack this targets — the same mechanism init-mosquitto-dynsec.sh relies
+# on. Hardcoding -f here would be a second, silently diverging spelling.
+COMPOSE="docker compose"
 
 BEFORE=""
 if [ -f deploy/mosquitto/certs/fullchain.pem ]; then

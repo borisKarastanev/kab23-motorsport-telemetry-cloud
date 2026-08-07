@@ -30,7 +30,7 @@ for var in PUBLIC_DOMAIN LETSENCRYPT_EMAIL; do
     declare "$var=$value"
 done
 
-if docker compose -f docker-compose.prod.yaml ps --status running --services 2>/dev/null | grep -qx web; then
+if docker compose ps --status running --services 2>/dev/null | grep -qx web; then
     echo "error: the web service is running and holding :80." >&2
     echo "       Stop it first (docker compose -f docker-compose.prod.yaml stop web)," >&2
     echo "       or if you already have a certificate use renew-certs.sh instead." >&2

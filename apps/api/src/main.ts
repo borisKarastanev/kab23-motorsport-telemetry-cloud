@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Logger } from 'nestjs-pino';
 import cookieParser from 'cookie-parser';
-import { corsOptionsFor } from '@app/common';
+import { corsOptionsFor } from './cors-origin';
 import { AppModule } from './app.module';
 import { CorsIoAdapter } from './live-telemetry/cors-io.adapter';
 

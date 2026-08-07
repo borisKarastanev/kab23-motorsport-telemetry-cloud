@@ -38,29 +38,29 @@ if [ ! -f "$SRC/fullchain.pem" ] || [ ! -f "$SRC/privkey.pem" ]; then
     exit 1
 fi
 
-if [ "$(id -u)" -ne 0 ] && [ "${ALLOW_WORLD_READABLE_KEY:-0}" != "1" ]; then
-    echo "error: run this as root (sudo) so the broker key can be chowned to uid 1883." >&2
-    echo "       For a local self-signed rehearsal only, set ALLOW_WORLD_READABLE_KEY=1." >&2
-    exit 1
-fi
-
 mkdir -p "$DEST"
 
 # -L to follow certbot's symlinks into archive/; a copy of a dangling symlink is
 # a file mosquitto cannot open.
 cp -L "$SRC/fullchain.pem" "$DEST/fullchain.pem"
 cp -L "$SRC/privkey.pem" "$DEST/privkey.pem"
-
 chmod 0644 "$DEST/fullchain.pem"
 
+# One branch on one fact. The invariant — root gets 0600, an explicit opt-in gets
+# 0644, anything else is refused — is easier to keep right in a single place than
+# split across a precondition and a later if/else.
 if [ "$(id -u)" -eq 0 ]; then
     # 1883 is the uid inside eclipse-mosquitto:2, not a port number.
     chown 1883:1883 "$DEST/fullchain.pem" "$DEST/privkey.pem"
     chmod 0600 "$DEST/privkey.pem"
-else
+elif [ "${ALLOW_WORLD_READABLE_KEY:-0}" = "1" ]; then
     chmod 0644 "$DEST/privkey.pem"
     echo "warning: key left world-readable (ALLOW_WORLD_READABLE_KEY=1)." >&2
     echo "         Acceptable for a local self-signed cert. Never on a server." >&2
+else
+    echo "error: run this as root (sudo) so the broker key can be chowned to uid 1883." >&2
+    echo "       For a local self-signed rehearsal only, set ALLOW_WORLD_READABLE_KEY=1." >&2
+    exit 1
 fi
 
 echo "Broker certificates synced for ${PUBLIC_DOMAIN}"

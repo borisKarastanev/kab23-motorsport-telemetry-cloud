@@ -2,6 +2,8 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
+const TABLE = 'telemetry_samples';
+
 /**
  * Refuses to start if the telemetry hypertable is missing.
  *
@@ -28,20 +30,18 @@ import { DataSource } from 'typeorm';
 export class TelemetrySchemaGuard implements OnModuleInit {
   private readonly logger = new Logger(TelemetrySchemaGuard.name);
 
-  static readonly TABLE = 'telemetry_samples';
-
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async onModuleInit(): Promise<void> {
     const rows = await this.dataSource.query(
       `SELECT 1 FROM timescaledb_information.hypertables
         WHERE hypertable_name = $1`,
-      [TelemetrySchemaGuard.TABLE],
+      [TABLE],
     );
 
     if (!rows?.length) {
       throw new Error(
-        `Hypertable "${TelemetrySchemaGuard.TABLE}" is missing. ` +
+        `Hypertable "${TABLE}" is missing. ` +
           'Run `pnpm run migration:run` against this database before starting ' +
           'telemetry-ingest.',
       );
