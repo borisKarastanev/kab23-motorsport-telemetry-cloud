@@ -4,6 +4,25 @@ export const configValidationSchema = Joi.object({
   // API
   PORT: Joi.number().default(3000),
 
+  /**
+   * Read since Phase 0 (`AuthService.login` gates the cookie's `secure` flag on
+   * it) but never validated until now. That gap is worth closing here rather
+   * than later: `NODE_ENV=Production` is not `'production'`, so the deployed API
+   * would go on issuing the auth cookie without `Secure` over a public HTTPS
+   * endpoint, and nothing anywhere would say so.
+   */
+  NODE_ENV: Joi.string()
+    .valid('development', 'production', 'test')
+    .default('development'),
+
+  /**
+   * Comma-separated list of browser origins allowed to call this API with
+   * credentials. Empty means same-origin only, which is the production setting:
+   * nginx serves the Angular bundle and proxies /api from one hostname, so no
+   * cross-origin request should succeed. See `corsOptionsFor`.
+   */
+  CORS_ORIGIN: Joi.string().allow('').default('http://localhost:4200'),
+
   // Domain database (PostgreSQL + TimescaleDB extension)
   DB_HOST: Joi.string().required(),
   DB_PORT: Joi.number().default(5432),

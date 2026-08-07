@@ -22,3 +22,8 @@ skills-lock.json
 .claude
 .agents
 .codex
+
+# Deploy-time state: TLS certificates and ACME challenge files. Private keys
+# must never be tracked, and these are generated per host.
+/deploy/certbot/
+/deploy/mosquitto/certs/

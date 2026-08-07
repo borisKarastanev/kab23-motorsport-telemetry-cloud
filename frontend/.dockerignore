@@ -1,0 +1,12 @@
+node_modules
+dist
+.angular
+coverage
+
+# The root .dockerignore governs the backend build context only; this file is the
+# one that applies when the build context is ./frontend. Secrets must never enter
+# an image layer — a layer survives deleting the file.
+.env
+.env.*
+*.pem
+*.key

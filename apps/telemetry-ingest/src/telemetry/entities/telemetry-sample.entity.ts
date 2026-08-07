@@ -2,7 +2,9 @@ import { Column, Entity, PrimaryColumn } from 'typeorm';
 
 /**
  * One 10 Hz telemetry sample. Backed by a TimescaleDB **hypertable**, not an
- * ordinary table — see `TelemetrySchemaService` for the DDL.
+ * ordinary table. The DDL lives in the baseline migration
+ * (`db/migrations/*-Baseline.ts`); `TelemetrySchemaGuard` checks on boot that it
+ * was actually run.
  *
  * Two deliberate departures from every other entity in this repo:
  *

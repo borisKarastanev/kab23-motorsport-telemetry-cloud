@@ -26,8 +26,7 @@ export class AuthService {
     const token = this.jwtService.sign(tokenPayload);
 
     response.cookie(AUTH_COOKIE, token, {
-      httpOnly: true,
-      secure: this.configService.get('NODE_ENV') === 'production',
+      ...this.cookieAttributes(),
       expires,
     });
 
@@ -36,9 +35,35 @@ export class AuthService {
 
   logout(response: Response): void {
     response.cookie(AUTH_COOKIE, '', {
-      httpOnly: true,
+      // Same attributes as `login`, not just `httpOnly`. A browser treats
+      // (name, domain, path) as the cookie's identity but will refuse to
+      // overwrite a `Secure` cookie from a mismatched context, so a clear-cookie
+      // that drops `secure`/`sameSite` can silently leave the original in place
+      // and log nobody out.
+      ...this.cookieAttributes(),
       expires: new Date(),
     });
+  }
+
+  /**
+   * The attributes every `Authentication` cookie carries, set and cleared.
+   *
+   * `secure` is driven by `NODE_ENV`, which is validated to a closed set in
+   * `config.schema.ts` — a typo there used to mean the cookie quietly shipped
+   * without `Secure` over a public endpoint.
+   *
+   * `sameSite: 'lax'` rather than `'strict'`: the app is served from the same
+   * origin as the API in production, so `lax` costs nothing there and still
+   * blocks the cross-site POST that CSRF needs — while `strict` would drop the
+   * cookie on a plain link into the app from anywhere else, logging the viewer
+   * out for no security gain.
+   */
+  private cookieAttributes() {
+    return {
+      httpOnly: true,
+      secure: this.configService.get('NODE_ENV') === 'production',
+      sameSite: 'lax' as const,
+    };
   }
 
   /**

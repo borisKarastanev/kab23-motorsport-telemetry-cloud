@@ -9,8 +9,18 @@ frontend
 .env
 .env.*
 !.env.example
+
+# `*.pem` alone is not enough: a .dockerignore `*` does not cross a `/`, so it
+# matches only the context root. The TLS material under deploy/ needs both the
+# recursive form and the directory itself.
 *.pem
 *.key
 *.p12
+**/*.pem
+**/*.key
+**/*.p12
+deploy/certbot
+deploy/mosquitto
+
 mosquitto/config/passwd
 CLAUDE.md

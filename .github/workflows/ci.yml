@@ -43,6 +43,7 @@ jobs:
           # a real connection. ConfigModule still validates presence eagerly at
           # import time (Joi in libs/common/src/config/config.module.ts), so the
           # keys must exist even though nothing reads them for real.
+          NODE_ENV: test
           DB_HOST: localhost
           DB_USERNAME: test
           DB_PASSWORD: test

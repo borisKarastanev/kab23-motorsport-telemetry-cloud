@@ -1,0 +1,217 @@
+# Production stack for a single VPS.
+#
+#   docker compose -f docker-compose.prod.yaml up -d --build
+#
+# Standalone, not an override layer on docker-compose.yaml. Compose overrides can
+# add a bind mount but cannot remove one, and the two things that must not
+# survive from the dev file are exactly a bind mount (`.:/usr/src/app`, which
+# would shadow the built image with host sources) and a published port
+# (`${DB_PORT}:5432`). A file that can be read top to bottom and audited is worth
+# more here than the duplication it costs.
+#
+# Full first-boot order is in DEPLOY.md. Short version: init dynsec, issue certs,
+# then `up` — the `migrate` service runs the schema before api or ingest start.
+
+services:
+  # ---------------------------------------------------------------- data ----
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${DB_USERNAME}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_DATABASE}
+    # No published port. The dev file maps ${DB_PORT}:5432 so the API can run on
+    # the host against compose infra; on a public box that is a Postgres server
+    # on the internet defended by one password.
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging:
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    # Unlike the dev file, an empty password is a hard failure rather than a
+    # silently unauthenticated server. Redis holds `lkv:car:*` — a named driver's
+    # current GPS fix — and `live:car:*` carries the same over pub/sub.
+    command: >
+      sh -c 'if [ -z "$$REDIS_PASSWORD" ]; then
+               echo "REDIS_PASSWORD must be set in production" >&2; exit 1;
+             fi;
+             exec redis-server --requirepass "$$REDIS_PASSWORD"'
+    # No published port and no persistence configured: everything in here is
+    # reconstructible from the hypertable, and nothing may be only here.
+    healthcheck:
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------------------------------------------- broker ----
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      # TLS only. 1883 still listens inside the compose network for ingest and
+      # for mosquitto_ctrl, and is deliberately not published.
+      - '8883:8883'
+    volumes:
+      # Mounted as the container's default config path, so the prod file is the
+      # one mosquitto actually reads — leaving both files in a mounted directory
+      # would just get mosquitto.conf picked up instead.
+      - ./mosquitto/config/mosquitto.prod.conf:/mosquitto/config/mosquitto.conf:ro
+      # Populated by deploy/sync-broker-certs.sh, which copies and chowns them
+      # out of the certbot tree. Mounting /etc/letsencrypt directly does not
+      # work: privkey.pem is root-owned 0600 and mosquitto runs as uid 1883.
+      - ./deploy/mosquitto/certs:/mosquitto/certs:ro
+      - mosquitto_data:/mosquitto/data
+    logging:
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  # ------------------------------------------------------------ schema ------
+  # One-shot. Runs the compiled migrations and exits; api and telemetry-ingest
+  # both wait for it to exit 0.
+  #
+  # Deliberately not `migrationsRun: true` on api boot: two api containers
+  # starting together would race on DDL, and a failed migration should stop the
+  # deploy rather than crash-loop a service that looks like it has a bug.
+  migrate:
+    build:
+      context: .
+      dockerfile: ./apps/api/Dockerfile
+      target: production
+    command:
+      [
+        'node',
+        'node_modules/typeorm/cli.js',
+        '-d',
+        'dist/migrations/typeorm.config.js',
+        'migration:run',
+      ]
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=timescaledb
+    restart: 'no'
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  # ----------------------------------------------------------- services -----
+  api:
+    build:
+      context: .
+      dockerfile: ./apps/api/Dockerfile
+      target: production
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=timescaledb
+      - REDIS_HOST=redis
+      - MQTT_URL=mqtt://mosquitto:1883
+    # No published port: nginx is the only thing that reaches this, over the
+    # compose network.
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+  telemetry-ingest:
+    build:
+      context: .
+      dockerfile: ./apps/telemetry-ingest/Dockerfile
+      target: production
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=timescaledb
+      - REDIS_HOST=redis
+      - MQTT_URL=mqtt://mosquitto:1883
+      # Blanked, not inherited: `env_file` would otherwise hand the broker's
+      # dynamic-security admin credential to a process that only ever
+      # subscribes, widening what an ingest compromise reaches for no benefit.
+      - MQTT_ADMIN_USERNAME=
+      - MQTT_ADMIN_PASSWORD=
+    # Exactly one replica, always. Two instances both hold `cars/+/telemetry`
+    # subscriptions, so every frame is consumed twice and published to Redis
+    # twice; the hypertable's dedup index absorbs the duplicate rows, so the
+    # database looks fine and only viewers see it (seq arriving 1,1,2,2,3,3).
+    # Horizontal scaling needs MQTT v5 shared subscriptions first.
+    deploy:
+      replicas: 1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mosquitto:
+        condition: service_started
+      timescaledb:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------- edge ----
+  # The Angular bundle plus TLS termination and the API/WebSocket proxy.
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      - PUBLIC_DOMAIN=${PUBLIC_DOMAIN}
+      # Restricts the entrypoint's envsubst pass to this one variable. Without
+      # it, envsubst would also expand $host, $uri and every other nginx runtime
+      # variable in the template to empty strings.
+      - NGINX_ENVSUBST_FILTER=PUBLIC_DOMAIN
+    volumes:
+      - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      - ./deploy/certbot/conf:/etc/letsencrypt:ro
+      - ./deploy/certbot/www:/var/www/certbot
+    healthcheck:
+      # /healthz, not /: every other path on :80 answers 301, and BusyBox wget
+      # treats a redirect as a failure. See the nginx template.
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  timescale_data:
+  mosquitto_data:

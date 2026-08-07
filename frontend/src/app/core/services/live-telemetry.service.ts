@@ -69,7 +69,11 @@ export class LiveTelemetryService {
 
     // The JWT is httpOnly, so the handshake authenticates by cookie exactly as
     // the REST calls do — the browser attaches it, this code never sees it.
-    const socket = io(`${environment.apiUrl}/live`, {
+    //
+    // `wsUrl`, not `apiUrl`: the second argument here is a **namespace**, and
+    // in production `apiUrl` is the path prefix '/api', which would ask the
+    // server for a namespace called "/api/live" that does not exist.
+    const socket = io(`${environment.wsUrl}/live`, {
       withCredentials: true,
     });
     this.socket = socket;
