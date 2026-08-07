@@ -382,4 +382,78 @@ describe('CarsService', () => {
       expect(carsRepository.findVisible).not.toHaveBeenCalled();
     });
   });
+
+  describe('findOne', () => {
+    it('resolves a readable car', async () => {
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+
+      await expect(
+        service.findOne(asUser('owner'), CAR_ID),
+      ).resolves.toMatchObject({ id: CAR_ID });
+    });
+
+    it('404s a car outside the caller tenant', async () => {
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'someone-else' }));
+
+      await expect(
+        service.findOne(asUser('outsider'), CAR_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('markUnprovisioned failure', () => {
+    it('logs rather than throws when the fallback write also fails', async () => {
+      // This runs while a rename failure is already propagating; it must not
+      // replace that error with a failure of its own best-effort cleanup.
+      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'owner' }));
+      mqttAdminService.ensureCar.mockRejectedValue(
+        new ServiceUnavailableException(),
+      );
+      carsRepository.updateCar.mockRejectedValue(new Error('db unavailable'));
+
+      await expect(
+        service.update(asUser('owner'), CAR_ID, { deviceId: 'NEW456' }),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      // The original rename failure surfaces, not the markUnprovisioned one.
+      expect(carsRepository.updateCar).toHaveBeenCalledWith(CAR_ID, {
+        mqttProvisionedAt: null,
+      });
+    });
+  });
+
+  describe('getVisibleCarIds', () => {
+    it('narrows to a single team when teamId is given', async () => {
+      carsRepository.findVisibleIds.mockResolvedValue(['car-a']);
+
+      await expect(
+        service.getVisibleCarIds(asUser('user-1'), TEAM_ID),
+      ).resolves.toEqual(['car-a']);
+      expect(carsRepository.findVisibleIds).toHaveBeenCalledWith({
+        teamIds: [TEAM_ID],
+      });
+      expect(teamsService.getUserTeamIds).not.toHaveBeenCalled();
+    });
+
+    it('returns every car id for a platform admin with no teamId', async () => {
+      carsRepository.findAllIds.mockResolvedValue(['car-a', 'car-b']);
+
+      await expect(
+        service.getVisibleCarIds(asUser('admin', UserRole.ADMIN)),
+      ).resolves.toEqual(['car-a', 'car-b']);
+      expect(carsRepository.findVisibleIds).not.toHaveBeenCalled();
+    });
+
+    it('scopes to owned plus team car ids for a normal user', async () => {
+      teamsService.getUserTeamIds.mockResolvedValue([TEAM_ID]);
+      carsRepository.findVisibleIds.mockResolvedValue(['car-a']);
+
+      await expect(
+        service.getVisibleCarIds(asUser('user-1')),
+      ).resolves.toEqual(['car-a']);
+      expect(carsRepository.findVisibleIds).toHaveBeenCalledWith({
+        ownerId: 'user-1',
+        teamIds: [TEAM_ID],
+      });
+    });
+  });
 });
