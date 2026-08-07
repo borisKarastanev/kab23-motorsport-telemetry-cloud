@@ -9,8 +9,9 @@
 # (`${DB_PORT}:5432`). A file that can be read top to bottom and audited is worth
 # more here than the duplication it costs.
 #
-# Full first-boot order is in DEPLOY.md. Short version: init dynsec, issue certs,
-# then `up` — the `migrate` service runs the schema before api or ingest start.
+# Full first-boot order is in DEPLOY.md. Short version: issue certs, init dynsec,
+# then `up` — certs first, because mosquitto.prod.conf's 8883 listener will not
+# start without them. The `migrate` service runs the schema before api or ingest.
 
 services:
   # ---------------------------------------------------------------- data ----
@@ -210,7 +211,14 @@ services:
       retries: 3
     depends_on:
       api:
-        condition: service_healthy
+        # Deliberately service_started, NOT service_healthy. nginx is the edge:
+        # if it waits for a healthy API, then an upgrade that breaks `api` takes
+        # the whole site down rather than degrading — no static bundle, no HTTPS
+        # redirect, and no /.well-known/acme-challenge/, which means
+        # deploy/renew-certs.sh cannot renew while the API is unwell either.
+        # Serving the app and surfacing API errors normally is the more useful
+        # failure mode.
+        condition: service_started
 
 volumes:
   timescale_data:

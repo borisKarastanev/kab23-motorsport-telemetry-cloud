@@ -14,7 +14,7 @@
     "start:api": "nest start api --watch",
     "start:ingest": "nest start telemetry-ingest --watch",
     "start:prod": "node dist/apps/api/main",
-    "start:local": "docker compose up -d timescaledb redis mosquitto && pnpm run migration:run && concurrently -n api,ingest,web -c blue,magenta,green \"corepack pnpm run start:api\" \"corepack pnpm run start:ingest\" \"corepack pnpm --dir frontend start\"",
+    "start:local": "docker compose up -d --wait timescaledb redis mosquitto && pnpm run migration:run && concurrently -n api,ingest,web -c blue,magenta,green \"corepack pnpm run start:api\" \"corepack pnpm run start:ingest\" \"corepack pnpm --dir frontend start\"",
     "migration:run": "typeorm-ts-node-commonjs -d typeorm.config.ts migration:run",
     "migration:revert": "typeorm-ts-node-commonjs -d typeorm.config.ts migration:revert",
     "migration:show": "typeorm-ts-node-commonjs -d typeorm.config.ts migration:show",

@@ -72,7 +72,30 @@ and `scripts/init-mosquitto-dynsec.sh`, which shells out to it — target the ri
 stack. Put it in the deploy user's shell profile so it is not something to
 remember.
 
-### 2.3 Bootstrap the broker's security, before the first `up`
+### 2.3 Issue the first certificate
+
+```bash
+sudo ./deploy/issue-certs.sh
+```
+
+Standalone mode, and only this once: the nginx config references
+`ssl_certificate`, so nginx cannot start without a certificate — and webroot
+issuance needs a running nginx to serve the challenge. Standalone binds :80
+itself and breaks the circle.
+
+**This must come before the dynsec bootstrap below.** `mosquitto.prod.conf`'s
+first listener is 8883 with `certfile /mosquitto/certs/fullchain.pem`, and
+Mosquitto exits at startup when it cannot load a certificate. Run the bootstrap
+first and its `docker compose up -d mosquitto` gets a crash-looping broker, the
+script times out waiting for `mosquitto_ctrl`, and you are left re-running it
+with `--reset` to recover. Renewals afterwards go through the running nginx.
+
+The script also copies the certificate to where Mosquitto can read it. That copy
+is not incidental: certbot writes `privkey.pem` root-owned `0600` as a symlink
+into `archive/`, and Mosquitto runs as uid 1883, so mounting `/etc/letsencrypt`
+into the broker gives a container that cannot read its own key.
+
+### 2.4 Bootstrap the broker's security, before the first `up`
 
 ```bash
 ./scripts/init-mosquitto-dynsec.sh
@@ -87,22 +110,6 @@ discards the generated config and rebuilds from `.env`.
 
 Never use `docker compose down -v` to clean this up. `-v` takes the TimescaleDB
 volume with it, and that is every session ever recorded.
-
-### 2.4 Issue the first certificate
-
-```bash
-sudo ./deploy/issue-certs.sh
-```
-
-Standalone mode, and only this once: the nginx config references
-`ssl_certificate`, so nginx cannot start without a certificate — and webroot
-issuance needs a running nginx to serve the challenge. Standalone binds :80
-itself and breaks the circle. Renewals afterwards go through the running nginx.
-
-The script also copies the certificate to where Mosquitto can read it. That copy
-is not incidental: certbot writes `privkey.pem` root-owned `0600` as a symlink
-into `archive/`, and Mosquitto runs as uid 1883, so mounting `/etc/letsencrypt`
-into the broker gives a container that cannot read its own key.
 
 ### 2.5 Up
 

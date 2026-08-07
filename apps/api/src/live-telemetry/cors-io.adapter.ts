@@ -14,8 +14,19 @@ import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.int
  *
  * Leaving the gateway behind would be the easy mistake here. The live socket
  * carries exactly the data the REST tightening is meant to protect: a named
- * driver's GPS, in real time. A locked-down `/api` next to a websocket that
- * accepts any origin with credentials is not a smaller hole, it is the same one.
+ * driver's GPS, in real time.
+ *
+ * **What this does and does not cover.** engine.io applies `cors` in its HTTP
+ * request handler, so it governs the polling handshake — but browsers do not
+ * enforce CORS on a WebSocket handshake at all, so a client opening the socket
+ * with `transports: ['websocket']` never consults it. This is therefore defence
+ * in depth, not the boundary. The boundary is the gateway's own handshake
+ * middleware, which resolves the `Authentication` cookie and refuses the
+ * connection outright, plus `requireReadableCar` on every `subscribe`; and the
+ * cookie is `sameSite: 'lax'`, so a cross-site page cannot get the browser to
+ * attach it in the first place. Tightening this further would mean an
+ * `allowRequest` callback comparing `handshake.headers.origin` against the same
+ * list — worth doing if the cookie's SameSite policy is ever relaxed.
  */
 export class CorsIoAdapter extends IoAdapter {
   constructor(

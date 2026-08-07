@@ -20,8 +20,14 @@ export const configValidationSchema = Joi.object({
    * credentials. Empty means same-origin only, which is the production setting:
    * nginx serves the Angular bundle and proxies /api from one hostname, so no
    * cross-origin request should succeed. See `corsOptionsFor`.
+   *
+   * **Defaults to empty, not to the dev origin.** A Joi default applies when the
+   * key is *absent*, which is the state of every `.env` written before this key
+   * existed — so defaulting to `http://localhost:4200` would silently allowlist
+   * it on any box upgraded without editing `.env`. A security default has to
+   * fail closed; `.env.example` carries the dev value instead.
    */
-  CORS_ORIGIN: Joi.string().allow('').default('http://localhost:4200'),
+  CORS_ORIGIN: Joi.string().allow('').default(''),
 
   // Domain database (PostgreSQL + TimescaleDB extension)
   DB_HOST: Joi.string().required(),
