@@ -5,10 +5,12 @@ import { TRACK_SEEDS } from './tracks.seed';
 /**
  * Puts the reference tracks in the database on boot.
  *
- * **Not `db/init/`**, for the reason `TelemetrySchemaService` already documents
- * about the hypertable DDL: `docker-entrypoint-initdb.d` runs only against an
- * empty data directory, so every existing dev database would silently never get
- * these rows — and a second copy of the coordinates would drift from this one.
+ * **Not `db/init/`**: `docker-entrypoint-initdb.d` runs only against an empty
+ * data directory, so every existing dev database would silently never get these
+ * rows — and a second copy of the coordinates would drift from this one. (The
+ * hypertable DDL was here for the same reason until Phase 5 moved it into the
+ * baseline migration, which has no such limitation. Reference data stays on
+ * boot: it is idempotent upserts, not schema.)
  *
  * Idempotent, so this is a no-op on all but the first boot and after a seed
  * edit. Phase 5 folds it into the migration baseline along with the rest of the

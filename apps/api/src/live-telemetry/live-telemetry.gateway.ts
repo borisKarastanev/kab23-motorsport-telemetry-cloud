@@ -56,12 +56,11 @@ interface LiveSocketData {
  * GPS traces are a named driver's location and are competitively sensitive.
  * A gap here is a cross-tenant leak, not a bug in a view.
  */
-@WebSocketGateway({
-  namespace: '/live',
-  // Matches main.ts: the Angular dev server is cross-origin and the handshake
-  // has to carry the auth cookie.
-  cors: { origin: true, credentials: true },
-})
+// CORS is deliberately absent here. It is applied to the whole socket.io server
+// by `CorsIoAdapter` in main.ts, from the same `CORS_ORIGIN` allowlist the REST
+// API uses — a decorator argument is evaluated before ConfigService exists, so
+// this is the only place the two can be kept in step.
+@WebSocketGateway({ namespace: '/live' })
 export class LiveTelemetryGateway
   implements OnGatewayInit, OnGatewayDisconnect
 {

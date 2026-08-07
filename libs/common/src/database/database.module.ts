@@ -25,8 +25,20 @@ import { ConfigModule } from '../config/config.module';
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
         autoLoadEntities: true,
-        // Dev convenience only. Phase 5 switches to TypeORM migrations.
-        synchronize: true,
+
+        /**
+         * Off in development too, not just in production.
+         *
+         * Gating this on NODE_ENV is the obvious alternative and is worse: a
+         * developer whose schema is maintained by `synchronize` never notices
+         * the migration they forgot to generate, and the drift only surfaces on
+         * the deployed box, where there is no `synchronize` to paper over it.
+         * Migrations are the single source of schema truth everywhere.
+         *
+         * Run them with `pnpm run migration:run` (`pnpm run start:local` does
+         * it for you); see typeorm.config.ts.
+         */
+        synchronize: false,
       }),
     }),
   ],

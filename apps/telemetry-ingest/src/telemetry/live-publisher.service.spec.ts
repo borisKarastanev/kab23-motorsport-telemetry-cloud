@@ -141,8 +141,8 @@ describe('LivePublisherService', () => {
   describe('channel parity with the hypertable', () => {
     /**
      * The telemetry channel list is spelled out in three places: this entity,
-     * the DDL in `TelemetrySchemaService`, and the live wire contract. The
-     * first two live in the same app; nothing but this connects the third.
+     * the hypertable DDL in the baseline migration, and the live wire contract.
+     * Nothing but this test connects the last one.
      *
      * Asserted by sentinel value rather than by name, because the mapping
      * deliberately renames (`coolantC` → `coolant`): a hand-written name table

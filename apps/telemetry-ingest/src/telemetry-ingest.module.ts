@@ -5,7 +5,7 @@ import { TelemetryController } from './telemetry/telemetry.controller';
 import { TelemetryService } from './telemetry/telemetry.service';
 import { TelemetryWriterService } from './telemetry/telemetry-writer.service';
 import { LivePublisherService } from './telemetry/live-publisher.service';
-import { TelemetrySchemaService } from './telemetry/telemetry-schema.service';
+import { TelemetrySchemaGuard } from './telemetry/telemetry-schema.guard';
 import { DeviceRegistryService } from './telemetry/device-registry.service';
 import { TelemetrySample } from './telemetry/entities/telemetry-sample.entity';
 import { IngestSessionsService } from './sessions/ingest-sessions.service';
@@ -29,7 +29,7 @@ import { SessionRef } from './sessions/entities/session-ref.entity';
     TelemetryService,
     TelemetryWriterService,
     LivePublisherService,
-    TelemetrySchemaService,
+    TelemetrySchemaGuard,
     DeviceRegistryService,
     IngestSessionsService,
   ],

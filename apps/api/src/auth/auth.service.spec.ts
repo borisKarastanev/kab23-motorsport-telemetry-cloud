@@ -1,0 +1,82 @@
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { Response } from 'express';
+import { AuthService } from './auth.service';
+import { UsersService } from '../users/users.service';
+import { User } from '../users/entities/user.entity';
+import { AUTH_COOKIE } from './auth.constants';
+
+describe('AuthService cookie attributes', () => {
+  const user = { id: 'e3b0c442-98fc-4c14-9afb-f4c8996fb924' } as User;
+
+  const serviceFor = (nodeEnv: string) => {
+    const cookie = jest.fn();
+    const config = {
+      get: (key: string) => ({ NODE_ENV: nodeEnv, JWT_EXPIRATION: 3600 })[key],
+    } as unknown as ConfigService;
+
+    const service = new AuthService(
+      config,
+      { sign: () => 'a.jwt.token' } as unknown as JwtService,
+      {} as UsersService,
+    );
+
+    return { service, cookie, response: { cookie } as unknown as Response };
+  };
+
+  const attributesOf = (cookie: jest.Mock, call = 0) =>
+    cookie.mock.calls[call][2];
+
+  it('sets an httpOnly, Secure, SameSite=Lax cookie in production', () => {
+    const { service, cookie, response } = serviceFor('production');
+
+    service.login(user, response);
+
+    expect(cookie).toHaveBeenCalledWith(
+      AUTH_COOKIE,
+      'a.jwt.token',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: true,
+        sameSite: 'lax',
+      }),
+    );
+  });
+
+  /**
+   * `ng serve` is plain http://localhost:4200, and a browser drops a `Secure`
+   * cookie sent over http — so forcing it on everywhere would break local login
+   * entirely.
+   */
+  it('drops Secure in development so the dev server can log in', () => {
+    const { service, cookie, response } = serviceFor('development');
+
+    service.login(user, response);
+
+    expect(attributesOf(cookie)).toMatchObject({
+      httpOnly: true,
+      secure: false,
+      sameSite: 'lax',
+    });
+  });
+
+  /**
+   * The regression this guards: a clear-cookie whose attributes do not match the
+   * original can leave the real cookie in place, so `logout` returns 200 and the
+   * viewer stays signed in.
+   */
+  it('clears the cookie with exactly the attributes it was set with', () => {
+    const { service, cookie, response } = serviceFor('production');
+
+    service.login(user, response);
+    service.logout(response);
+
+    const [set, cleared] = [attributesOf(cookie, 0), attributesOf(cookie, 1)];
+
+    expect(cleared.httpOnly).toBe(set.httpOnly);
+    expect(cleared.secure).toBe(set.secure);
+    expect(cleared.sameSite).toBe(set.sameSite);
+    expect(cookie.mock.calls[1][1]).toBe('');
+    expect(cleared.expires.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+});

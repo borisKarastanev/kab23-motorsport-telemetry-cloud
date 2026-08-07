@@ -1,0 +1,21 @@
+{
+  // Compiles the migration runner for the production image, where ts-node must
+  // not exist. `nest build` cannot do this: migrations are not part of either
+  // Nest application's import graph, so nothing would pull them in.
+  //
+  // Only `typeorm.config.ts` and the migrations themselves are compiled. The
+  // entity globs in typeorm.config.ts are dev-only (see the comment there), so
+  // none of the app's `@app/common` path aliases reach this output — which is
+  // why it needs no tsconfig-paths registration at runtime.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist/migrations",
+    "rootDir": ".",
+    "declaration": false,
+    "sourceMap": false,
+    // `nest build` sets this for its own projects; leaving it on here would put
+    // a .tsbuildinfo next to the emitted JS and skip re-emits after a clean.
+    "incremental": false
+  },
+  "include": ["typeorm.config.ts", "config.schema.ts", "db/migrations/**/*.ts"]
+}

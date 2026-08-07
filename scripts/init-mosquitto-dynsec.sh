@@ -143,6 +143,31 @@ in_stopped_broker 'mosquitto_ctrl dynsec init '"$CONFIG"' "$MQTT_ADMIN_USERNAME"
 echo "Starting broker to create the ingest account…"
 docker compose up -d mosquitto
 
+# The broker must actually be up before the poll below means anything.
+#
+# The failure this catches: under docker-compose.prod.yaml the first listener is
+# 8883 with a certfile, and mosquitto exits at startup when it cannot load one —
+# so if certificates have not been issued yet (DEPLOY.md §2.3, which must run
+# before this script) the container crash-loops. Without this check the poll
+# below just times out and reports "broker did not accept 'admin'", blaming
+# authentication for a TLS problem and sending you to --reset, which does not
+# help. Same guard idiom as issue-certs.sh's :80 check.
+sleep 2
+if ! docker compose ps --status running --services 2>/dev/null | grep -qx mosquitto; then
+    echo "error: the broker exited immediately after starting." >&2
+    echo >&2
+    echo "       Most likely its TLS certificate is missing. The production" >&2
+    echo "       config's first listener is 8883 with" >&2
+    echo "       certfile /mosquitto/certs/fullchain.pem, and mosquitto refuses" >&2
+    echo "       to start without it — issue certificates first:" >&2
+    echo >&2
+    echo "         sudo ./deploy/issue-certs.sh" >&2
+    echo >&2
+    echo "       Then re-run this script. Broker log:" >&2
+    docker compose logs --tail=15 mosquitto >&2 || true
+    exit 1
+fi
+
 # The broker needs a moment to bind before mosquitto_ctrl can talk to it.
 for _ in $(seq 1 30); do
     if ctrl_succeeded listClients; then

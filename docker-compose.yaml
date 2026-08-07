@@ -13,6 +13,17 @@ services:
     volumes:
       - timescale_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
+    # `up -d` returns when the container is created, not when Postgres accepts
+    # connections — and on a fresh volume initdb takes tens of seconds. That was
+    # harmless while TypeORM (which retries 10x) was the first thing to connect;
+    # since `synchronize` went away, the first connection is the migration CLI,
+    # which does not retry. `start:local` passes --wait so it blocks on this.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     logging:
       options:
         max-size: 10m
@@ -55,6 +66,30 @@ services:
       - ./mosquitto/config:/mosquitto/config
       - mosquitto_data:/mosquitto/data
 
+  # One-shot schema step, mirroring docker-compose.prod.yaml. Needed because
+  # `synchronize` is off everywhere now: without this, `docker compose up --build`
+  # brings up an api that errors on every query and an ingest that refuses to
+  # start on TelemetrySchemaGuard, against an empty database. Running on the host
+  # instead (`pnpm run migration:run`) is equally fine — this just makes the
+  # all-in-containers path self-contained.
+  migrate:
+    build:
+      context: .
+      dockerfile: ./apps/api/Dockerfile
+      target: development
+    command: pnpm run migration:run
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=timescaledb
+    restart: 'no'
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
   api:
     build:
       context: .
@@ -73,8 +108,12 @@ services:
       - .:/usr/src/app
       - /usr/src/app/node_modules
     depends_on:
-      - timescaledb
-      - redis
+      migrate:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   telemetry-ingest:
     build:
@@ -97,8 +136,12 @@ services:
       - .:/usr/src/app
       - /usr/src/app/node_modules
     depends_on:
-      - mosquitto
-      - timescaledb
+      migrate:
+        condition: service_completed_successfully
+      mosquitto:
+        condition: service_started
+      timescaledb:
+        condition: service_healthy
 
 volumes:
   timescale_data:

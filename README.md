@@ -55,6 +55,12 @@ cp .env.example .env          # adjust secrets
 # 4. infra (Postgres+Timescale, Redis, Mosquitto)
 docker compose up -d timescaledb redis mosquitto
 
+# 5. schema. There is no `synchronize` any more — in development either — so
+#    this is required on a fresh volume and after any pull that adds a
+#    migration. An existing database built by the old `synchronize: true` is
+#    adopted with `--fake` once; see DEPLOY.md §5.
+pnpm run migration:run
+
 # 5a. API  (http://localhost:3000)
 pnpm run start:api
 
@@ -70,6 +76,17 @@ Or run the whole backend + infra in containers:
 ```bash
 docker compose up --build
 ```
+
+## Deploying
+
+`docker-compose.prod.yaml` runs the whole platform on a single VPS behind nginx,
+with TLS for the browser (443) and for cars (8883). **[DEPLOY.md](./DEPLOY.md)**
+is the runbook — including how to rehearse the entire production stack locally
+against self-signed certificates before a server exists.
+
+The file above (`docker-compose.yaml`, no suffix) is for development only: it
+publishes Postgres and the plaintext broker to the host and mounts the working
+tree over the built image.
 
 ## Smoke tests
 
@@ -169,7 +186,7 @@ Two checks guard it: the `Authentication` cookie at the socket handshake, and
 `requireReadableCar` on every `subscribe`. A car outside the caller's tenant is
 refused with the same flat "Car not found" the REST layer uses.
 
-## Status — Phases 0–3 complete (cloud side)
+## Status — Phases 0–4 and the Phase 5 deploy slice complete (cloud side)
 
 - [x] NestJS monorepo (`api` monolith + `telemetry-ingest`) + `libs/common`
 - [x] Postgres/TimescaleDB, Redis, Mosquitto via docker-compose
@@ -183,8 +200,15 @@ refused with the same flat "Car not found" the REST layer uses.
 - [x] Redis pub/sub fan-out + last-known-value cache (Phase 3)
 - [x] WebSocket gateway with cookie auth and per-car authorization
 - [x] Team-manager live view: gauges, SVG track trace, car picker
+- [x] Lap segmentation, sector times, braking points + driver analysis UI (Phase 4)
+- [x] TypeORM migrations — `synchronize` is off everywhere (Phase 5)
+- [x] Production compose for a single VPS, publishing only 80/443/8883 (Phase 5)
+- [x] TLS end-to-end: nginx + certbot for the app, Mosquitto on 8883 for cars (Phase 5)
 
-Next: **Phase 4** — lap segmentation, racing line, sector times and the driver
-analysis UI. Phase 2's on-car uplink is deliberately scheduled last, after the
-Phase 5 deploy, so TLS is already up when the dash first connects to a public
-broker.
+Next: **Phase 2's on-car uplink**, which was deliberately scheduled last so that
+TLS would already be up when the dash first connects to a public broker. It now
+is.
+
+Still open in Phase 5, scheduled with or after the Pi: backups (nothing yet
+copies the TimescaleDB volume off the box — see DEPLOY.md §6),
+retention/compression policies, and the device provisioning flow.

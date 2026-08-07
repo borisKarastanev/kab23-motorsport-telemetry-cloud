@@ -1,0 +1,127 @@
+# TLS termination, static Angular bundle, and the API/WebSocket proxy.
+#
+# Mounted at /etc/nginx/templates/, so the nginx image's entrypoint runs envsubst
+# over it into /etc/nginx/conf.d/ at start-up. NGINX_ENVSUBST_FILTER is set to
+# PUBLIC_DOMAIN in docker-compose.prod.yaml — without that filter envsubst would
+# also eat $host, $uri and every other nginx runtime variable below, leaving them
+# blank.
+
+upstream api_upstream {
+    # The api container. Not published to the host in production: nginx is the
+    # only thing that may reach it.
+    server api:3000;
+}
+
+server {
+    # default_server so a request to the bare IP, or to any other name pointed
+    # at this host, is redirected too rather than falling through to whatever
+    # server block nginx would otherwise pick.
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${PUBLIC_DOMAIN};
+
+    # Let's Encrypt HTTP-01. Renewal happens through this path against the
+    # running nginx (deploy/renew-certs.sh); only the very first issuance uses
+    # standalone mode, because nginx cannot start without a certificate.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Liveness, on :80 and exempt from the redirect below. The container
+    # healthcheck needs a plain 2xx: everything else here answers 301, and
+    # BusyBox wget — all the nginx image ships — reports a redirect as a failure,
+    # so a healthcheck against `/` marks a perfectly healthy container unhealthy.
+    # An exact-match location outranks the prefix `location /`.
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${PUBLIC_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${PUBLIC_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${PUBLIC_DOMAIN}/privkey.pem;
+
+    # The nginx base image ships gzip commented out. This stack is built for
+    # pit-wall laptops on tethered LTE, and the Angular bundle is 401 KB raw
+    # against 126 KB gzipped — 275 KB of avoidable transfer on every cold load,
+    # plus every JSON body proxied through /api/ (telemetry responses are large
+    # and highly compressible).
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/javascript application/json
+               application/manifest+json image/svg+xml;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # The auth cookie is Secure in production, so there is no downgrade path
+    # worth leaving open.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # GPS traces and lap telemetry. Nothing here is cacheable by a shared proxy.
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    # Load-bearing: the API runs with `trust proxy` set to one hop and reads this
+    # to decide whether the request was encrypted.
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location /api/ {
+        # Trailing slash on both sides strips the /api prefix, so the API keeps
+        # its own route paths and needs no global prefix.
+        proxy_pass http://api_upstream/;
+    }
+
+    location /socket.io/ {
+        proxy_pass http://api_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # A pit-wall browser holds this socket open for a whole session and the
+        # server only speaks when a frame arrives. The 60 s default would drop an
+        # idle live view between sessions and make it look like a flaky network.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        # Frames are small and latency is the point — p50 delivery is ~1 ms and
+        # buffering here would spend that many times over.
+        proxy_buffering off;
+    }
+
+    # Content-hashed by Angular's `outputHashing: all`, so these filenames are
+    # immutable by construction and a conditional request for them can only ever
+    # come back 304. Without this every reload costs ~10 revalidations over TLS.
+    # index.html is deliberately NOT matched: it is the one unhashed file, and
+    # caching it would pin a browser to an old bundle across a deploy.
+    location ~* \.(?:js|css|woff2?|svg|png|jpg|ico)$ {
+        root /usr/share/nginx/html;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+
+    location / {
+        root /usr/share/nginx/html;
+        # Angular routes are client-side; /sessions/<uuid> is not a file.
+        try_files $uri $uri/ /index.html;
+    }
+}

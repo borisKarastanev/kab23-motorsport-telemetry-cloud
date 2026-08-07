@@ -3,7 +3,10 @@
 /coverage
 *.log
 .env
-.env.local
+# Every .env variant — .env.local, .env.rehearsal, .env.production — except the
+# committed placeholder file. Mirrors .dockerignore, which already had this.
+.env.*
+!.env.example
 *.tsbuildinfo
 .DS_Store
 frontend/node_modules
@@ -22,3 +25,8 @@ skills-lock.json
 .claude
 .agents
 .codex
+
+# Deploy-time state: TLS certificates and ACME challenge files. Private keys
+# must never be tracked, and these are generated per host.
+/deploy/certbot/
+/deploy/mosquitto/certs/
