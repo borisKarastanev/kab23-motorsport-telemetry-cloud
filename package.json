@@ -96,7 +96,9 @@
     "collectCoverageFrom": [
       "**/*.(t|j)s",
       "!**/main.ts",
-      "!scripts/mock-telemetry-publisher.js"
+      "!scripts/mock-telemetry-publisher.js",
+      "!**/*.module.ts",
+      "!**/entities/*.entity.ts"
     ],
     "coverageDirectory": "./coverage",
     "coverageReporters": [
