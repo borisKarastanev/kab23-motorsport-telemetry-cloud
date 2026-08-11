@@ -65,6 +65,18 @@ describe('DeviceRegistryService', () => {
     });
   });
 
+  it("anchors to the resolving frame's own mono clock when the row has none yet", async () => {
+    // A session opened by this very call has no `deviceMonoStartMs` written
+    // yet — the frame that opened it is the only anchor there is.
+    sessions.openSession.mockResolvedValue(
+      sessionRow({ deviceMonoStartMs: null }),
+    );
+
+    const context = await service.resolve(DEVICE_ID, SID, 7_500);
+
+    expect(context).toMatchObject({ monoStartMs: 7_500 });
+  });
+
   it('places a sample relative to the session anchor', () => {
     expect(
       DeviceRegistryService.sampleTime(
@@ -145,5 +157,35 @@ describe('DeviceRegistryService', () => {
     await service.resolve(DEVICE_ID, SID, 1_000);
 
     expect(sessions.openSession).toHaveBeenCalledTimes(2);
+  });
+
+  describe('the background sweep', () => {
+    afterEach(() => jest.useRealTimers());
+
+    it('drops an entry only once its TTL has actually elapsed', async () => {
+      // A cache hit hands the stored promise straight back with no expiry
+      // check of its own (see `resolve`) — the sweep is the only thing that
+      // ever removes a slot, so this is the only way a re-fetch after the TTL
+      // gets exercised at all.
+      jest.useFakeTimers();
+      const sweepingService = new DeviceRegistryService(
+        sessions as unknown as IngestSessionsService,
+      );
+
+      await sweepingService.resolve(DEVICE_ID, SID, 1_000);
+      expect(sessions.openSession).toHaveBeenCalledTimes(1);
+
+      // Sweeps run every 5 minutes; the entry's 60-minute TTL survives several
+      // of them untouched — the loop's "not yet expired" branch — before the
+      // sweep that finally crosses it deletes the slot. No intervening
+      // `resolve` call, since a cache hit would otherwise push the TTL out
+      // another hour.
+      await jest.advanceTimersByTimeAsync(65 * 60 * 1000);
+
+      await sweepingService.resolve(DEVICE_ID, SID, 1_000);
+      expect(sessions.openSession).toHaveBeenCalledTimes(2);
+
+      sweepingService.onApplicationShutdown();
+    });
   });
 });

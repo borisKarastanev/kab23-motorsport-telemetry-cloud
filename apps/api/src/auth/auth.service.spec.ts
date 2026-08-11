@@ -6,9 +6,9 @@ import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { AUTH_COOKIE } from './auth.constants';
 
-describe('AuthService cookie attributes', () => {
-  const user = { id: 'e3b0c442-98fc-4c14-9afb-f4c8996fb924' } as User;
+const user = { id: 'e3b0c442-98fc-4c14-9afb-f4c8996fb924' } as User;
 
+describe('AuthService cookie attributes', () => {
   const serviceFor = (nodeEnv: string) => {
     const cookie = jest.fn();
     const config = {
@@ -78,5 +78,50 @@ describe('AuthService cookie attributes', () => {
     expect(cleared.sameSite).toBe(set.sameSite);
     expect(cookie.mock.calls[1][1]).toBe('');
     expect(cleared.expires.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+});
+
+describe('AuthService.userFromToken', () => {
+  /**
+   * For callers outside the request cycle — the live WebSocket handshake —
+   * where passport's guards never run, so nothing else has verified the token.
+   */
+  it('resolves the user a verified token belongs to, with its expiry', async () => {
+    const jwtService = {
+      verifyAsync: jest
+        .fn()
+        .mockResolvedValue({ userId: user.id, exp: 1_800_000_000 }),
+    } as unknown as JwtService;
+    const usersService = {
+      fetchUser: jest.fn().mockResolvedValue(user),
+    } as unknown as UsersService;
+    const service = new AuthService(
+      {} as ConfigService,
+      jwtService,
+      usersService,
+    );
+
+    await expect(service.userFromToken('a.jwt.token')).resolves.toEqual({
+      user,
+      exp: 1_800_000_000,
+    });
+    expect(usersService.fetchUser).toHaveBeenCalledWith({ id: user.id });
+  });
+
+  it('propagates rejection for a bad, expired or unknown token', async () => {
+    // The caller decides what to say about it — and says the same thing for
+    // all three, so this must not swallow or reshape the error.
+    const jwtService = {
+      verifyAsync: jest.fn().mockRejectedValue(new Error('jwt expired')),
+    } as unknown as JwtService;
+    const service = new AuthService(
+      {} as ConfigService,
+      jwtService,
+      {} as UsersService,
+    );
+
+    await expect(service.userFromToken('stale.jwt.token')).rejects.toThrow(
+      'jwt expired',
+    );
   });
 });

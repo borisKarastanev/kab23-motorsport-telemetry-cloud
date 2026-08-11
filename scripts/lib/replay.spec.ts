@@ -194,6 +194,41 @@ describe('dash session records', () => {
       loadReplaySource(write('wrong.json', JSON.stringify({ hello: 'world' }))),
     ).toThrow(/not a dash session record/);
   });
+
+  it('refuses a record whose only lap path is too short to interpolate', () => {
+    const record = {
+      lapMs: [90_000],
+      lapPaths: [[42.34, 24.73]], // one point — nothing to draw a line between
+    };
+
+    expect(() =>
+      loadReplaySource(write('short-lap.json', JSON.stringify(record))),
+    ).toThrow(/no lap with usable geometry/);
+  });
+
+  it('refuses a record whose only lap has no recorded time', () => {
+    const record = {
+      lapMs: [0],
+      lapPaths: [[42.34, 24.73, 42.341, 24.731]],
+    };
+
+    expect(() =>
+      loadReplaySource(write('no-time-lap.json', JSON.stringify(record))),
+    ).toThrow(/no lap with usable geometry/);
+  });
+
+  it('refuses a record whose only lap covered no measured distance', () => {
+    // A path of coincident points — the dash's decimation can produce these —
+    // has a real duration but nothing to spread it across.
+    const record = {
+      lapMs: [90_000],
+      lapPaths: [[42.34, 24.73, 42.34, 24.73, 42.34, 24.73]],
+    };
+
+    expect(() =>
+      loadReplaySource(write('stationary-lap.json', JSON.stringify(record))),
+    ).toThrow(/no lap with usable geometry/);
+  });
 });
 
 describe('JSONL frame logs', () => {
@@ -303,6 +338,45 @@ describe('JSONL frame logs', () => {
     expect(source.step(TICK_MS).speedKmh).toBe(120);
     expect(source.step(TICK_MS).speedKmh).toBe(118);
     expect(source.step(TICK_MS)).toBeNull();
+    // Once exhausted, it stays exhausted rather than restarting the log.
+    expect(source.step(TICK_MS)).toBeNull();
+  });
+
+  it('loops a clockless log rather than running dry', () => {
+    const source = loadReplaySource(
+      write('loop.jsonl', frames.map((f) => JSON.stringify(f)).join('\n')),
+      { loop: true },
+    );
+
+    const speeds: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      speeds.push(source.step(TICK_MS).speedKmh);
+    }
+
+    // Two frames, six steps: the recording repeats twice over.
+    expect(speeds).toEqual([120, 118, 120, 118, 120, 118]);
+  });
+
+  it("loops a clocked log rather than running dry", () => {
+    // A 40 ms recording replayed well past its own span at a 100 ms tick.
+    const recorded = [
+      { v: 1, mono: 0, lat: 42.34, lon: 24.73, speed: 100, lap: 1 },
+      { v: 1, mono: 40, lat: 42.341, lon: 24.73, speed: 110, lap: 1 },
+    ];
+    const source = loadReplaySource(
+      write('loop-clock.jsonl', recorded.map((f) => JSON.stringify(f)).join('\n')),
+      { loop: true },
+    );
+
+    const speeds: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      speeds.push(source.step(TICK_MS).speedKmh);
+    }
+
+    // Every value seen belongs to the two-frame recording, however far past
+    // its own span the clock has been driven.
+    expect(speeds.every((speed) => speed === 100 || speed === 110)).toBe(true);
+    expect(speeds).toContain(100);
   });
 
   it('rejects a malformed line by number', () => {

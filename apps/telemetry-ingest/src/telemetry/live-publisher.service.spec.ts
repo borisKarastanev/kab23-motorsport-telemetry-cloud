@@ -1,4 +1,5 @@
 import { LKV_TTL_SECONDS, REDIS_CLIENT, LiveFrame } from '@app/common';
+import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getMetadataArgsStorage } from 'typeorm';
 import { LivePublisherService } from './live-publisher.service';
@@ -220,6 +221,59 @@ describe('LivePublisherService', () => {
       await expect(
         service.publishEvent(CAR_ID, SESSION_ID, 'start'),
       ).resolves.toBeUndefined();
+    });
+
+    it('resolves even when the client throws synchronously', async () => {
+      // Same rule as the frame path: nothing here may propagate and break
+      // whatever awaits it.
+      redis.pipeline.mockImplementation(() => {
+        throw new Error('connection is closed');
+      });
+
+      await expect(
+        service.publishEvent(CAR_ID, SESSION_ID, 'start'),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('failure counting', () => {
+    let warn: jest.SpyInstance;
+
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    });
+
+    afterEach(() => warn.mockRestore());
+
+    it('counts a command that failed on its own without rejecting exec', async () => {
+      // `exec` rejects only on a connection-level failure — a command that
+      // failed on its own reports in the results array and would otherwise
+      // pass for success.
+      stub.resolveWith(
+        Promise.resolve([
+          [null, 1],
+          [new Error('DEL failed'), null],
+        ]),
+      );
+
+      await service.publishEvent(CAR_ID, SESSION_ID, 'stop');
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Live publish failed for 1 message(s)'),
+      );
+    });
+
+    it('does not log a second time for a failure inside the same window', async () => {
+      // At 10 Hz per car, a per-failure log line would turn a Redis blip into
+      // a second outage in the log sink. The first-ever failure always logs —
+      // there is nothing to summarise yet — so it is the second one, arriving
+      // straight after, that exercises the suppression.
+      stub.resolveWith(Promise.reject(new Error('redis is down')));
+
+      await service.publishEvent(CAR_ID, SESSION_ID, 'start');
+      await service.publishEvent(CAR_ID, SESSION_ID, 'start');
+
+      expect(warn).toHaveBeenCalledTimes(1);
     });
   });
 });
