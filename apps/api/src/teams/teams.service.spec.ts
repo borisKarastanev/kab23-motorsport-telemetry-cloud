@@ -24,10 +24,13 @@ describe('TeamsService', () => {
       findOne: jest.fn(),
       findAll: jest.fn(),
       findByIds: jest.fn().mockResolvedValue([]),
+      findOneAndUpdate: jest.fn(),
+      findOneAndDelete: jest.fn(),
     };
     membersRepository = {
       findMembership: jest.fn().mockResolvedValue(null),
       find: jest.fn().mockResolvedValue([]),
+      findRoster: jest.fn().mockResolvedValue([]),
       countByRole: jest.fn().mockResolvedValue(1),
       create: jest.fn(),
       findOneAndUpdate: jest.fn(),
@@ -38,6 +41,7 @@ describe('TeamsService', () => {
       find: jest.fn().mockResolvedValue([]),
       findPending: jest.fn().mockResolvedValue(null),
       createInvite: jest.fn(),
+      findOneAndUpdate: jest.fn(),
       findOneAndDelete: jest.fn(),
     };
 
@@ -112,6 +116,114 @@ describe('TeamsService', () => {
 
       expect(teamsRepository.findByIds).toHaveBeenCalledWith([]);
       expect(teamsRepository.findAll).not.toHaveBeenCalled();
+    });
+
+    it('returns every team for a platform admin', async () => {
+      teamsRepository.findAll.mockResolvedValue([{ id: TEAM_ID } as never]);
+
+      await service.findAll(asUser('admin', UserRole.ADMIN));
+
+      expect(teamsRepository.findAll).toHaveBeenCalled();
+      expect(teamsRepository.findByIds).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getMembership', () => {
+    it('delegates straight to the members repository', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.MANAGER) as never,
+      );
+
+      await expect(
+        service.getMembership('user-1', TEAM_ID),
+      ).resolves.toMatchObject({ role: TeamRole.MANAGER });
+      expect(membersRepository.findMembership).toHaveBeenCalledWith(
+        'user-1',
+        TEAM_ID,
+      );
+    });
+  });
+
+  describe('findOne', () => {
+    it('authorizes before reading the team', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.DRIVER) as never,
+      );
+      teamsRepository.findOne.mockResolvedValue({ id: TEAM_ID } as never);
+
+      await expect(
+        service.findOne(asUser('user-1'), TEAM_ID),
+      ).resolves.toMatchObject({ id: TEAM_ID });
+    });
+  });
+
+  describe('update', () => {
+    it('requires OWNER before patching the team', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.MANAGER) as never,
+      );
+
+      await expect(
+        service.update(asUser('user-1'), TEAM_ID, { name: 'New name' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(teamsRepository.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('lets an OWNER rename the team', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.OWNER) as never,
+      );
+      teamsRepository.findOneAndUpdate.mockResolvedValue({
+        id: TEAM_ID,
+        name: 'New name',
+      } as never);
+
+      await service.update(asUser('owner'), TEAM_ID, { name: 'New name' });
+
+      expect(teamsRepository.findOneAndUpdate).toHaveBeenCalledWith(
+        { id: TEAM_ID },
+        { name: 'New name' },
+      );
+    });
+  });
+
+  describe('remove', () => {
+    it('requires OWNER before deleting the team', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.MANAGER) as never,
+      );
+
+      await expect(
+        service.remove(asUser('user-1'), TEAM_ID),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(teamsRepository.findOneAndDelete).not.toHaveBeenCalled();
+    });
+
+    it('lets an OWNER delete the team', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.OWNER) as never,
+      );
+
+      await service.remove(asUser('owner'), TEAM_ID);
+
+      expect(teamsRepository.findOneAndDelete).toHaveBeenCalledWith({
+        id: TEAM_ID,
+      });
+    });
+  });
+
+  describe('getRoster', () => {
+    it('authorizes membership before listing the roster', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.DRIVER) as never,
+      );
+      membersRepository.findRoster.mockResolvedValue([
+        membership(TeamRole.DRIVER),
+      ] as never);
+
+      await expect(
+        service.getRoster(asUser('user-1'), TEAM_ID),
+      ).resolves.toHaveLength(1);
     });
   });
 
@@ -191,6 +303,26 @@ describe('TeamsService', () => {
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
+
+    it('updates the role on an already-pending invite instead of duplicating it', async () => {
+      invitesRepository.findPending.mockResolvedValue({
+        id: 'invite-1',
+        teamId: TEAM_ID,
+        email: 'someone@example.test',
+        role: TeamRole.DRIVER,
+      } as never);
+
+      await service.inviteMember(asUser('owner'), TEAM_ID, {
+        email: 'someone@example.test',
+        role: TeamRole.MANAGER,
+      });
+
+      expect(invitesRepository.findOneAndUpdate).toHaveBeenCalledWith(
+        { id: 'invite-1' },
+        { role: TeamRole.MANAGER },
+      );
+      expect(invitesRepository.createInvite).not.toHaveBeenCalled();
+    });
   });
 
   describe('last owner protection', () => {
@@ -225,6 +357,52 @@ describe('TeamsService', () => {
       await service.removeMember(asUser('owner'), TEAM_ID, 'owner');
 
       expect(membersRepository.findOneAndDelete).toHaveBeenCalled();
+    });
+
+    it('updates a role that does not touch the last-owner protection', async () => {
+      membersRepository.findMembership.mockImplementation(async (userId) =>
+        userId === 'owner'
+          ? (membership(TeamRole.OWNER, 'owner') as never)
+          : (membership(TeamRole.DRIVER, 'target') as never),
+      );
+
+      await service.updateMemberRole(asUser('owner'), TEAM_ID, 'target', {
+        role: TeamRole.MANAGER,
+      });
+
+      expect(membersRepository.countByRole).not.toHaveBeenCalled();
+      expect(membersRepository.findOneAndUpdate).toHaveBeenCalledWith(
+        { id: 'member-target' },
+        { role: TeamRole.MANAGER },
+      );
+    });
+
+    it('404s a role update for a target who is not a member', async () => {
+      membersRepository.findMembership.mockImplementation(async (userId) =>
+        userId === 'owner'
+          ? (membership(TeamRole.OWNER, 'owner') as never)
+          : null,
+      );
+
+      await expect(
+        service.updateMemberRole(asUser('owner'), TEAM_ID, 'ghost', {
+          role: TeamRole.MANAGER,
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(membersRepository.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('404s removing a target who is not a member', async () => {
+      membersRepository.findMembership.mockImplementation(async (userId) =>
+        userId === 'owner'
+          ? (membership(TeamRole.OWNER, 'owner') as never)
+          : null,
+      );
+
+      await expect(
+        service.removeMember(asUser('owner'), TEAM_ID, 'ghost'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(membersRepository.findOneAndDelete).not.toHaveBeenCalled();
     });
   });
 
@@ -285,6 +463,80 @@ describe('TeamsService', () => {
       expect(invitesRepository.find).toHaveBeenCalledWith({
         email: 'mixed@case.test',
       });
+    });
+
+    it('declines an invite addressed to the caller', async () => {
+      invitesRepository.findOne.mockResolvedValue(
+        invite('newcomer@example.test') as never,
+      );
+
+      await service.declineInvite(asUser('newcomer'), 'invite-1');
+
+      expect(invitesRepository.findOneAndDelete).toHaveBeenCalledWith({
+        id: 'invite-1',
+      });
+      expect(membersRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('404s declining someone else invite', async () => {
+      invitesRepository.findOne.mockResolvedValue(
+        invite('victim@example.test') as never,
+      );
+
+      await expect(
+        service.declineInvite(asUser('attacker'), 'invite-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(invitesRepository.findOneAndDelete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('managing invites', () => {
+    it('lets a manager list the team pending invites', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.MANAGER) as never,
+      );
+      invitesRepository.find.mockResolvedValue([
+        { id: 'invite-1', teamId: TEAM_ID },
+      ] as never);
+
+      await expect(
+        service.listInvites(asUser('manager'), TEAM_ID),
+      ).resolves.toHaveLength(1);
+      expect(invitesRepository.find).toHaveBeenCalledWith({ teamId: TEAM_ID });
+    });
+
+    it('403s a driver trying to list invites', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.DRIVER) as never,
+      );
+
+      await expect(
+        service.listInvites(asUser('user-1'), TEAM_ID),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lets a manager revoke a pending invite', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.MANAGER) as never,
+      );
+
+      await service.revokeInvite(asUser('manager'), TEAM_ID, 'invite-1');
+
+      expect(invitesRepository.findOneAndDelete).toHaveBeenCalledWith({
+        id: 'invite-1',
+        teamId: TEAM_ID,
+      });
+    });
+
+    it('403s a driver trying to revoke an invite', async () => {
+      membersRepository.findMembership.mockResolvedValue(
+        membership(TeamRole.DRIVER) as never,
+      );
+
+      await expect(
+        service.revokeInvite(asUser('user-1'), TEAM_ID, 'invite-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(invitesRepository.findOneAndDelete).not.toHaveBeenCalled();
     });
   });
 });

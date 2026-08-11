@@ -134,6 +134,20 @@ describe('SessionsService', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
+    it('honours an explicit startedAt instead of stamping now', async () => {
+      await service.create(asUser('driver'), {
+        carId: CAR_ID,
+        track: 'Kaloyanovo',
+        startedAt: '2026-08-01T09:30:00Z',
+      });
+
+      expect(sessionsRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          startedAt: new Date('2026-08-01T09:30:00Z'),
+        }),
+      );
+    });
+
     it('lets a manager open a session for a team driver', async () => {
       carsService.requireReadableCar.mockResolvedValue({
         id: CAR_ID,
@@ -293,6 +307,113 @@ describe('SessionsService', () => {
         undefined,
       );
     });
+
+    it('authorizes and scopes to a single car when carId is given', async () => {
+      carsService.requireReadableCar.mockResolvedValue({ id: CAR_ID } as Car);
+
+      await service.findAll(asUser('driver'), { carId: CAR_ID });
+
+      expect(carsService.requireReadableCar).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'driver' }),
+        CAR_ID,
+      );
+      expect(sessionsRepository.findVisible).toHaveBeenCalledWith(
+        null,
+        [CAR_ID],
+        undefined,
+      );
+    });
+
+    it('returns every session on the platform for an admin with no filter', async () => {
+      await service.findAll(asUser('admin', UserRole.ADMIN), {});
+
+      expect(sessionsRepository.findAllFiltered).toHaveBeenCalledWith(
+        undefined,
+      );
+      expect(sessionsRepository.findVisible).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    it('updates a session the caller may write to', async () => {
+      sessionsRepository.findOne.mockResolvedValue(session());
+      sessionsRepository.findOneAndUpdate.mockResolvedValue(
+        session({ track: 'Serres' }),
+      );
+
+      await service.update(asUser('driver'), SESSION_ID, {
+        track: 'Serres',
+      });
+
+      expect(sessionsRepository.findOneAndUpdate).toHaveBeenCalledWith(
+        { id: SESSION_ID },
+        { track: 'Serres' },
+      );
+    });
+
+    it('403s a teammate with no write access to the car', async () => {
+      sessionsRepository.findOne.mockResolvedValue(session());
+      carsService.requireWritableCar.mockRejectedValue(
+        new ForbiddenException(),
+      );
+
+      await expect(
+        service.update(asUser('teammate'), SESSION_ID, { track: 'Serres' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(sessionsRepository.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('remove', () => {
+    it('deletes a session the caller may write to', async () => {
+      sessionsRepository.findOne.mockResolvedValue(session());
+
+      await service.remove(asUser('driver'), SESSION_ID);
+
+      expect(sessionsRepository.findOneAndDelete).toHaveBeenCalledWith({
+        id: SESSION_ID,
+      });
+    });
+
+    it('403s a teammate with no write access to the car', async () => {
+      sessionsRepository.findOne.mockResolvedValue(session());
+      carsService.requireWritableCar.mockRejectedValue(
+        new ForbiddenException(),
+      );
+
+      await expect(
+        service.remove(asUser('teammate'), SESSION_ID),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(sessionsRepository.findOneAndDelete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setAnalyzedAt', () => {
+    it('stamps the session with the derivation timestamp', async () => {
+      const analyzedAt = new Date('2026-08-01T12:00:00Z');
+
+      await service.setAnalyzedAt(SESSION_ID, analyzedAt);
+
+      expect(sessionsRepository.findOneAndUpdate).toHaveBeenCalledWith(
+        { id: SESSION_ID },
+        { analyzedAt },
+      );
+    });
+  });
+
+  describe('requireSession error remapping', () => {
+    it('rethrows an error that is neither NotFound nor Forbidden untouched', async () => {
+      // A DB failure or anything else unrelated to authorization must not be
+      // reinterpreted as "session not found" — only the two authorization
+      // outcomes are remapped.
+      sessionsRepository.findOne.mockResolvedValue(session());
+      const dbError = new Error('connection reset');
+      carsService.requireReadableCar.mockRejectedValue(dbError);
+
+      await expect(
+        service.findOne(asUser('outsider'), SESSION_ID),
+      ).rejects.toBe(dbError);
+    });
   });
 
   describe('close', () => {
@@ -355,6 +476,30 @@ describe('SessionsService', () => {
 
       expect(telemetryRepository.findDownsampled.mock.calls[0][2]).toEqual(
         endedAt,
+      );
+    });
+
+    it('honours an explicit from instead of defaulting to startedAt', async () => {
+      sessionsRepository.findOne.mockResolvedValue(session());
+
+      await service.getTelemetry(asUser('driver'), SESSION_ID, {
+        from: '2026-08-01T10:05:00Z',
+      });
+
+      expect(telemetryRepository.findDownsampled.mock.calls[0][1]).toEqual(
+        new Date('2026-08-01T10:05:00Z'),
+      );
+    });
+
+    it('honours an explicit to instead of defaulting to now/endedAt', async () => {
+      sessionsRepository.findOne.mockResolvedValue(session());
+
+      await service.getTelemetry(asUser('driver'), SESSION_ID, {
+        to: '2026-08-01T10:20:00Z',
+      });
+
+      expect(telemetryRepository.findDownsampled.mock.calls[0][2]).toEqual(
+        new Date('2026-08-01T10:20:00Z'),
       );
     });
 

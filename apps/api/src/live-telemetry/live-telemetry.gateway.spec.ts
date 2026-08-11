@@ -309,6 +309,87 @@ describe('LiveTelemetryGateway', () => {
     });
   });
 
+  describe('afterInit', () => {
+    it('wires the connection middleware and the bus handler onto the server', async () => {
+      const use = jest.fn();
+      const to = jest.fn().mockReturnValue({ emit: jest.fn() });
+      const server = { use, to } as unknown as import('socket.io').Server;
+      // `@WebSocketServer()` normally populates this before Nest calls
+      // `afterInit`; nothing does that wiring in this unit test.
+      (gateway as unknown as { server: unknown }).server = server;
+
+      gateway.afterInit(server);
+
+      // The middleware is registered as a plain function that fires-and-forgets
+      // `authenticate`; call it the way socket.io would to prove it is wired to
+      // the real handshake logic rather than a no-op.
+      expect(use).toHaveBeenCalledWith(expect.any(Function));
+      const middleware = use.mock.calls[0][0] as (
+        socket: unknown,
+        next: (error?: Error) => void,
+      ) => void;
+      const client = fakeSocket();
+      const next = jest.fn();
+      middleware(client, next);
+      // `authenticate` is async and fired without awaiting; give its promise a
+      // tick to settle before asserting.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(next).toHaveBeenCalled();
+
+      // The bus handler fans a frame out to the car's room. Capture what
+      // `setHandler` was registered with and invoke it directly, since the
+      // real bus is mocked in this suite.
+      expect(bus.setHandler).toHaveBeenCalledWith(expect.any(Function));
+      const handler = bus.setHandler.mock.calls[0][0] as (message: {
+        carId: string;
+        kind: string;
+        payload: unknown;
+      }) => void;
+      const emit = jest.fn();
+      to.mockReturnValue({ emit });
+
+      handler({ carId: CAR_ID, kind: 'frame', payload: { v: 1 } });
+
+      expect(to).toHaveBeenCalledWith(carRoom(CAR_ID));
+      expect(emit).toHaveBeenCalledWith('frame', { v: 1 });
+    });
+  });
+
+  describe('seed failures', () => {
+    it('logs and still leaves the subscribe successful when redis.get throws', async () => {
+      redis.get.mockRejectedValue(new Error('redis down'));
+      const client = await connected();
+
+      await gateway.subscribe(client as unknown as Socket, { carId: CAR_ID });
+
+      // A missing seed costs one frame of blank gauges — it must not fail the
+      // subscribe that has already been authorized.
+      expect(client.rooms.has(carRoom(CAR_ID))).toBe(true);
+      expect(
+        client.emit.mock.calls.some(([event]) => event === 'error'),
+      ).toBe(false);
+    });
+  });
+
+  describe('cookie parsing', () => {
+    it('skips a malformed part with no = and keeps looking', async () => {
+      const client = fakeSocket('malformed; Authentication=a.valid.token');
+      await handshake(client);
+
+      expect(auth.userFromToken).toHaveBeenCalledWith('a.valid.token');
+    });
+
+    it('returns null when no part matches the cookie name', async () => {
+      const client = fakeSocket('foo=bar; baz=qux');
+
+      const refusal = await handshake(client);
+
+      expect(refusal).toBeInstanceOf(Error);
+      expect(auth.userFromToken).not.toHaveBeenCalled();
+    });
+  });
+
   describe('token expiry', () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => jest.useRealTimers());
