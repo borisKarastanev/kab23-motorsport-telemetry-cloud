@@ -3,6 +3,7 @@ import { TracksService } from './tracks.service';
 import { TracksRepository } from './tracks.repository';
 import { TracksSeedService } from './tracks-seed.service';
 import { TRACK_SEEDS } from './tracks.seed';
+import { Track } from './entities/track.entity';
 
 describe('TracksService', () => {
   let service: TracksService;
@@ -28,6 +29,15 @@ describe('TracksService', () => {
     }).compile();
 
     service = moduleRef.get(TracksService);
+  });
+
+  describe('findAll', () => {
+    it('delegates to the repository', async () => {
+      const tracks = [{ slug: 'kaloyanovo' }] as Track[];
+      repository.findAllOrdered.mockResolvedValue(tracks);
+
+      await expect(service.findAll()).resolves.toBe(tracks);
+    });
   });
 
   describe('resolve', () => {
