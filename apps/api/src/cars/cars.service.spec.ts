@@ -393,7 +393,9 @@ describe('CarsService', () => {
     });
 
     it('404s a car outside the caller tenant', async () => {
-      carsRepository.findOne.mockResolvedValue(car({ ownerId: 'someone-else' }));
+      carsRepository.findOne.mockResolvedValue(
+        car({ ownerId: 'someone-else' }),
+      );
 
       await expect(
         service.findOne(asUser('outsider'), CAR_ID),
@@ -447,9 +449,9 @@ describe('CarsService', () => {
       teamsService.getUserTeamIds.mockResolvedValue([TEAM_ID]);
       carsRepository.findVisibleIds.mockResolvedValue(['car-a']);
 
-      await expect(
-        service.getVisibleCarIds(asUser('user-1')),
-      ).resolves.toEqual(['car-a']);
+      await expect(service.getVisibleCarIds(asUser('user-1'))).resolves.toEqual(
+        ['car-a'],
+      );
       expect(carsRepository.findVisibleIds).toHaveBeenCalledWith({
         ownerId: 'user-1',
         teamIds: [TEAM_ID],

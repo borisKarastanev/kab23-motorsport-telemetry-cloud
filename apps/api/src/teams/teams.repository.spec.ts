@@ -57,9 +57,9 @@ describe('TeamsRepository', () => {
       const teams = [{ id: 'team-1' } as Team];
       (typeormRepository.find as jest.Mock).mockResolvedValue(teams);
 
-      await expect(
-        repository.findByIds(['team-1', 'team-2']),
-      ).resolves.toBe(teams);
+      await expect(repository.findByIds(['team-1', 'team-2'])).resolves.toBe(
+        teams,
+      );
       expect(typeormRepository.find).toHaveBeenCalledWith({
         where: { id: expect.anything() },
         order: { name: 'ASC' },

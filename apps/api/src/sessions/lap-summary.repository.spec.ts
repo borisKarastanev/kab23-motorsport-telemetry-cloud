@@ -7,9 +7,7 @@ describe('LapSummaryRepository', () => {
 
   beforeEach(() => {
     dataSource = { query: jest.fn() };
-    repository = new LapSummaryRepository(
-      dataSource as unknown as DataSource,
-    );
+    repository = new LapSummaryRepository(dataSource as unknown as DataSource);
   });
 
   it('returns an empty map without querying when given no session ids', async () => {
@@ -23,10 +21,7 @@ describe('LapSummaryRepository', () => {
       { sessionId: 'session-2', lapCount: 3, bestLapMs: null },
     ]);
 
-    const result = await repository.findBySessions([
-      'session-1',
-      'session-2',
-    ]);
+    const result = await repository.findBySessions(['session-1', 'session-2']);
 
     expect(result.get('session-1')).toEqual({
       sessionId: 'session-1',

@@ -366,9 +366,9 @@ describe('LiveTelemetryGateway', () => {
       // A missing seed costs one frame of blank gauges — it must not fail the
       // subscribe that has already been authorized.
       expect(client.rooms.has(carRoom(CAR_ID))).toBe(true);
-      expect(
-        client.emit.mock.calls.some(([event]) => event === 'error'),
-      ).toBe(false);
+      expect(client.emit.mock.calls.some(([event]) => event === 'error')).toBe(
+        false,
+      );
     });
   });
 

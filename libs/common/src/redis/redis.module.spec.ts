@@ -120,9 +120,7 @@ describe('RedisModule', () => {
     // reject — that must not fail a shutdown that is already under way.
     FakeRedis.instances[1].quit.mockRejectedValue(new Error('not connected'));
 
-    await expect(
-      redisModule.onApplicationShutdown(),
-    ).resolves.toBeUndefined();
+    await expect(redisModule.onApplicationShutdown()).resolves.toBeUndefined();
     expect(FakeRedis.instances[0].quit).toHaveBeenCalled();
     expect(FakeRedis.instances[1].quit).toHaveBeenCalled();
   });

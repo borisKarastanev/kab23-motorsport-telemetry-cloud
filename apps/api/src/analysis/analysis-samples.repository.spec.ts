@@ -20,9 +20,9 @@ describe('AnalysisSamplesRepository', () => {
       const rows = [{ time: from, lat: 1, lon: 2 }];
       (dataSource.query as jest.Mock).mockResolvedValue(rows);
 
-      await expect(
-        repository.findRange('session-1', from, to),
-      ).resolves.toBe(rows);
+      await expect(repository.findRange('session-1', from, to)).resolves.toBe(
+        rows,
+      );
       expect(dataSource.query).toHaveBeenCalledWith(expect.any(String), [
         'session-1',
         from,
@@ -55,9 +55,9 @@ describe('AnalysisSamplesRepository', () => {
     it('returns the count from the first row', async () => {
       (dataSource.query as jest.Mock).mockResolvedValue([{ count: 42 }]);
 
-      await expect(
-        repository.countRange('session-1', from, to),
-      ).resolves.toBe(42);
+      await expect(repository.countRange('session-1', from, to)).resolves.toBe(
+        42,
+      );
       expect(dataSource.query).toHaveBeenCalledWith(expect.any(String), [
         'session-1',
         from,

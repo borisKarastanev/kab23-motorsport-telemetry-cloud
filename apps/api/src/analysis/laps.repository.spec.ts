@@ -41,9 +41,7 @@ describe('LapsRepository', () => {
       const laps = [{ id: '1', lapNumber: 1 } as Lap];
       (typeormRepository.find as jest.Mock).mockResolvedValue(laps);
 
-      await expect(repository.findBySession('session-1')).resolves.toBe(
-        laps,
-      );
+      await expect(repository.findBySession('session-1')).resolves.toBe(laps);
       expect(typeormRepository.find).toHaveBeenCalledWith({
         where: { sessionId: 'session-1' },
         order: { lapNumber: 'ASC' },

@@ -7,9 +7,7 @@ describe('TelemetryRepository', () => {
 
   beforeEach(() => {
     dataSource = { query: jest.fn() };
-    repository = new TelemetryRepository(
-      dataSource as unknown as DataSource,
-    );
+    repository = new TelemetryRepository(dataSource as unknown as DataSource);
   });
 
   it('returns whatever the query yields', async () => {

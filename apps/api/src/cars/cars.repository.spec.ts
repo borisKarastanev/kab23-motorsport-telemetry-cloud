@@ -127,10 +127,10 @@ describe('CarsRepository', () => {
 
       await repository.findVisibleIds({ teamIds: ['team-1'] });
 
-      expect(qb.where).toHaveBeenCalledWith(
-        '(car.teamId IN (:...teamIds))',
-        { ownerId: undefined, teamIds: ['team-1'] },
-      );
+      expect(qb.where).toHaveBeenCalledWith('(car.teamId IN (:...teamIds))', {
+        ownerId: undefined,
+        teamIds: ['team-1'],
+      });
     });
   });
 

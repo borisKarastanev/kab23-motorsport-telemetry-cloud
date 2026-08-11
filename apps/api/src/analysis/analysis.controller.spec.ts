@@ -93,9 +93,9 @@ describe('AnalysisController', () => {
       const comparison = { lapA: 2, lapB: 5 } as LapCompareDto;
       analysisService.compare!.mockResolvedValue(comparison);
 
-      await expect(
-        controller.compare(user, SESSION_ID, query),
-      ).resolves.toBe(comparison);
+      await expect(controller.compare(user, SESSION_ID, query)).resolves.toBe(
+        comparison,
+      );
       expect(analysisService.compare).toHaveBeenCalledWith(
         user,
         SESSION_ID,

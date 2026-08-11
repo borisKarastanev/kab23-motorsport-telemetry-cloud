@@ -23,18 +23,16 @@ describe('JwtStrategy', () => {
       const user = { id: 'user-1' } as User;
       usersService.fetchUser.mockResolvedValue(user);
 
-      await expect(
-        strategy.validate({ userId: 'user-1' }),
-      ).resolves.toBe(user);
+      await expect(strategy.validate({ userId: 'user-1' })).resolves.toBe(user);
       expect(usersService.fetchUser).toHaveBeenCalledWith({ id: 'user-1' });
     });
 
     it('propagates a lookup failure rather than swallowing it', async () => {
       usersService.fetchUser.mockRejectedValue(new Error('not found'));
 
-      await expect(
-        strategy.validate({ userId: 'ghost' }),
-      ).rejects.toThrow('not found');
+      await expect(strategy.validate({ userId: 'ghost' })).rejects.toThrow(
+        'not found',
+      );
     });
   });
 

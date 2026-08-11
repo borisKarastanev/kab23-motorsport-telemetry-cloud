@@ -38,9 +38,7 @@ describe('InvitesController', () => {
       declineInvite: jest.fn(),
     };
 
-    controller = new InvitesController(
-      teamsService as unknown as TeamsService,
-    );
+    controller = new InvitesController(teamsService as unknown as TeamsService);
   });
 
   it('listMine delegates to the service scoped to the caller', async () => {
@@ -65,9 +63,7 @@ describe('InvitesController', () => {
     const user = asUser('user-1');
     teamsService.declineInvite!.mockResolvedValue(undefined);
 
-    await expect(
-      controller.decline(user, INVITE_ID),
-    ).resolves.toBeUndefined();
+    await expect(controller.decline(user, INVITE_ID)).resolves.toBeUndefined();
     expect(teamsService.declineInvite).toHaveBeenCalledWith(user, INVITE_ID);
   });
 });

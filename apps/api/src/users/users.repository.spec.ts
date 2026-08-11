@@ -88,10 +88,7 @@ describe('UsersRepository', () => {
         password: hashed,
       } as User);
 
-      await repository.validateUser(
-        'Driver@Example.TEST',
-        'correct-password',
-      );
+      await repository.validateUser('Driver@Example.TEST', 'correct-password');
 
       expect(typeormRepository.findOne).toHaveBeenCalledWith({
         where: { email: 'driver@example.test' },

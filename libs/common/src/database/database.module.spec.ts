@@ -10,7 +10,9 @@ import { DatabaseModule } from './database.module';
  * rather than exported from `DatabaseModule`, since the factory is otherwise
  * only reachable by actually opening a Postgres connection.
  */
-const optionsFactory = (): ((config: ConfigService) => Record<string, unknown>) => {
+const optionsFactory = (): ((
+  config: ConfigService,
+) => Record<string, unknown>) => {
   const imports: Array<{ module?: unknown; imports?: unknown[] }> =
     Reflect.getMetadata('imports', DatabaseModule);
   const typeOrmDynamicModule = imports.find(

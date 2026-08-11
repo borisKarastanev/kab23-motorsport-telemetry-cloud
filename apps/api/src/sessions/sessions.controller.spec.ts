@@ -99,11 +99,7 @@ describe('SessionsController', () => {
     await expect(controller.update(user, SESSION_ID, dto)).resolves.toBe(
       updated,
     );
-    expect(sessionsService.update).toHaveBeenCalledWith(
-      user,
-      SESSION_ID,
-      dto,
-    );
+    expect(sessionsService.update).toHaveBeenCalledWith(user, SESSION_ID, dto);
   });
 
   it('close delegates to the service with user and id', async () => {
@@ -119,9 +115,7 @@ describe('SessionsController', () => {
     const user = asUser('user-1');
     sessionsService.remove!.mockResolvedValue(undefined);
 
-    await expect(
-      controller.remove(user, SESSION_ID),
-    ).resolves.toBeUndefined();
+    await expect(controller.remove(user, SESSION_ID)).resolves.toBeUndefined();
     expect(sessionsService.remove).toHaveBeenCalledWith(user, SESSION_ID);
   });
 });

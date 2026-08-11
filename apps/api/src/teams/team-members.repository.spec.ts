@@ -49,9 +49,9 @@ describe('TeamMembersRepository', () => {
       const membership = { id: '1', role: TeamRole.MANAGER } as TeamMember;
       (typeormRepository.findOne as jest.Mock).mockResolvedValue(membership);
 
-      await expect(
-        repository.findMembership('user-1', 'team-1'),
-      ).resolves.toBe(membership);
+      await expect(repository.findMembership('user-1', 'team-1')).resolves.toBe(
+        membership,
+      );
     });
   });
 

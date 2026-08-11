@@ -56,9 +56,7 @@ describe('TeamsController', () => {
       revokeInvite: jest.fn(),
     };
 
-    controller = new TeamsController(
-      teamsService as unknown as TeamsService,
-    );
+    controller = new TeamsController(teamsService as unknown as TeamsService);
   });
 
   it('create delegates to the service with caller and dto', async () => {
@@ -95,9 +93,7 @@ describe('TeamsController', () => {
     const updated = team({ name: 'Renamed' });
     teamsService.update!.mockResolvedValue(updated);
 
-    await expect(controller.update(user, TEAM_ID, dto)).resolves.toBe(
-      updated,
-    );
+    await expect(controller.update(user, TEAM_ID, dto)).resolves.toBe(updated);
     expect(teamsService.update).toHaveBeenCalledWith(user, TEAM_ID, dto);
   });
 
@@ -126,11 +122,7 @@ describe('TeamsController', () => {
     await expect(
       controller.inviteMember(user, TEAM_ID, dto),
     ).resolves.toBeUndefined();
-    expect(teamsService.inviteMember).toHaveBeenCalledWith(
-      user,
-      TEAM_ID,
-      dto,
-    );
+    expect(teamsService.inviteMember).toHaveBeenCalledWith(user, TEAM_ID, dto);
   });
 
   it('updateMemberRole delegates to the service with user, team id, member id and dto', async () => {
@@ -169,9 +161,7 @@ describe('TeamsController', () => {
     const invites = [invite()];
     teamsService.listInvites!.mockResolvedValue(invites);
 
-    await expect(controller.listInvites(user, TEAM_ID)).resolves.toBe(
-      invites,
-    );
+    await expect(controller.listInvites(user, TEAM_ID)).resolves.toBe(invites);
     expect(teamsService.listInvites).toHaveBeenCalledWith(user, TEAM_ID);
   });
 

@@ -25,9 +25,7 @@ describe('UsersController', () => {
       updateProfile: jest.fn(),
     };
 
-    controller = new UsersController(
-      usersService as unknown as UsersService,
-    );
+    controller = new UsersController(usersService as unknown as UsersService);
   });
 
   it('updateProfile delegates to the service with the caller id and dto', async () => {
@@ -36,12 +34,7 @@ describe('UsersController', () => {
     const updated = user({ displayName: 'New Name' });
     usersService.updateProfile!.mockResolvedValue(updated);
 
-    await expect(controller.updateProfile(caller, dto)).resolves.toBe(
-      updated,
-    );
-    expect(usersService.updateProfile).toHaveBeenCalledWith(
-      caller.id,
-      dto,
-    );
+    await expect(controller.updateProfile(caller, dto)).resolves.toBe(updated);
+    expect(usersService.updateProfile).toHaveBeenCalledWith(caller.id, dto);
   });
 });

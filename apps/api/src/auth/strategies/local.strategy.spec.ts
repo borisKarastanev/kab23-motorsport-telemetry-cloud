@@ -59,12 +59,8 @@ describe('LocalStrategy', () => {
   });
 
   it('gives the same generic failure whether the account exists or the password is wrong', async () => {
-    usersService.verifyUser.mockRejectedValueOnce(
-      new Error('unknown account'),
-    );
-    usersService.verifyUser.mockRejectedValueOnce(
-      new Error('wrong password'),
-    );
+    usersService.verifyUser.mockRejectedValueOnce(new Error('unknown account'));
+    usersService.verifyUser.mockRejectedValueOnce(new Error('wrong password'));
 
     const unknownAccount = await strategy
       .validate('nobody@example.test', 'x')

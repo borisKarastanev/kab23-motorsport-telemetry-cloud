@@ -51,9 +51,9 @@ describe('CreateCarDto', () => {
 
     const errors = await validate(dto);
     expect(errors.some((e) => e.property === 'deviceId')).toBe(true);
-    expect(errors.find((e) => e.property === 'deviceId')?.constraints).toHaveProperty(
-      'matches',
-    );
+    expect(
+      errors.find((e) => e.property === 'deviceId')?.constraints,
+    ).toHaveProperty('matches');
   });
 
   it('rejects an empty deviceId', async () => {

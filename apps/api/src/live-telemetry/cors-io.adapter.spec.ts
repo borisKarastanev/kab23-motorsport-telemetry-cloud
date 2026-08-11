@@ -12,10 +12,7 @@ describe('CorsIoAdapter', () => {
     // `cors` into the options this class is responsible for is under test, so
     // the base implementation is stubbed to capture what it was called with.
     const createIOServerSpy = jest
-      .spyOn(
-        Object.getPrototypeOf(CorsIoAdapter.prototype),
-        'createIOServer',
-      )
+      .spyOn(Object.getPrototypeOf(CorsIoAdapter.prototype), 'createIOServer')
       .mockReturnValue('server' as never);
 
     const result = adapter.createIOServer(3000, { path: '/live' } as never);
@@ -35,10 +32,7 @@ describe('CorsIoAdapter', () => {
     const adapter = new CorsIoAdapter(app, cors);
 
     const createIOServerSpy = jest
-      .spyOn(
-        Object.getPrototypeOf(CorsIoAdapter.prototype),
-        'createIOServer',
-      )
+      .spyOn(Object.getPrototypeOf(CorsIoAdapter.prototype), 'createIOServer')
       .mockReturnValue('server' as never);
 
     adapter.createIOServer(3000);

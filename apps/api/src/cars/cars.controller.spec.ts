@@ -33,9 +33,7 @@ describe('CarsController', () => {
       remove: jest.fn(),
     };
 
-    controller = new CarsController(
-      carsService as unknown as CarsService,
-    );
+    controller = new CarsController(carsService as unknown as CarsService);
   });
 
   it('create delegates to the service with the caller and dto', async () => {
@@ -85,13 +83,10 @@ describe('CarsController', () => {
     };
     carsService.issueMqttCredentials!.mockResolvedValue(credentials);
 
-    await expect(
-      controller.issueMqttCredentials(user, CAR_ID),
-    ).resolves.toBe(credentials);
-    expect(carsService.issueMqttCredentials).toHaveBeenCalledWith(
-      user,
-      CAR_ID,
+    await expect(controller.issueMqttCredentials(user, CAR_ID)).resolves.toBe(
+      credentials,
     );
+    expect(carsService.issueMqttCredentials).toHaveBeenCalledWith(user, CAR_ID);
   });
 
   it('remove delegates to the service with user and id', async () => {

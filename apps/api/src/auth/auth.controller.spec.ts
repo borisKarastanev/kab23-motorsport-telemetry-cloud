@@ -5,8 +5,7 @@ import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 
-const asUser = (id: string) =>
-  ({ id, email: `${id}@example.test` }) as User;
+const asUser = (id: string) => ({ id, email: `${id}@example.test` }) as User;
 
 describe('AuthController', () => {
   let controller: AuthController;

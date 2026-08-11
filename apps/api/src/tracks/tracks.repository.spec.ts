@@ -50,13 +50,16 @@ describe('TracksRepository', () => {
       qb.getOne.mockResolvedValue(track);
       typeormRepository.createQueryBuilder.mockReturnValue(qb);
 
-      await expect(
-        repository.findByDeviceTrack('Kaloyanovo'),
-      ).resolves.toBe(track);
+      await expect(repository.findByDeviceTrack('Kaloyanovo')).resolves.toBe(
+        track,
+      );
 
-      expect(qb.where).toHaveBeenCalledWith('lower(track.slug) = lower(:track)', {
-        track: 'Kaloyanovo',
-      });
+      expect(qb.where).toHaveBeenCalledWith(
+        'lower(track.slug) = lower(:track)',
+        {
+          track: 'Kaloyanovo',
+        },
+      );
       expect(qb.orWhere).toHaveBeenCalledWith(
         ':track = ANY(track.deviceTrackIds)',
         { track: 'Kaloyanovo' },

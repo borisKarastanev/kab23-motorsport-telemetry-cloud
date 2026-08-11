@@ -13,7 +13,9 @@ const ROUTE_ARGS_METADATA = '__routeArguments__';
  */
 const factoryOf = (decorator: () => ParameterDecorator) => {
   class TestController {
-    method(@decorator() _value: unknown) {}
+    // The parameter exists only so the decorator has somewhere to attach.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    method(@decorator() value: unknown) {}
   }
 
   const args = Reflect.getMetadata(

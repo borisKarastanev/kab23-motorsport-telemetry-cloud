@@ -46,10 +46,7 @@ describe('SessionsRepository', () => {
         carIds: [],
       });
       expect(qb.andWhere).not.toHaveBeenCalled();
-      expect(qb.orderBy).toHaveBeenCalledWith(
-        'session.startedAt',
-        'DESC',
-      );
+      expect(qb.orderBy).toHaveBeenCalledWith('session.startedAt', 'DESC');
     });
 
     it('scopes to driver OR carIds when both are present', async () => {
@@ -72,10 +69,10 @@ describe('SessionsRepository', () => {
 
       await repository.findVisible(null, ['car-1']);
 
-      expect(qb.where).toHaveBeenCalledWith(
-        '(session.carId IN (:...carIds))',
-        { driverId: null, carIds: ['car-1'] },
-      );
+      expect(qb.where).toHaveBeenCalledWith('(session.carId IN (:...carIds))', {
+        driverId: null,
+        carIds: ['car-1'],
+      });
     });
 
     it('adds a status filter when one is given', async () => {
@@ -100,10 +97,7 @@ describe('SessionsRepository', () => {
 
       await expect(repository.findAllFiltered()).resolves.toBe(sessions);
       expect(qb.where).not.toHaveBeenCalled();
-      expect(qb.orderBy).toHaveBeenCalledWith(
-        'session.startedAt',
-        'DESC',
-      );
+      expect(qb.orderBy).toHaveBeenCalledWith('session.startedAt', 'DESC');
     });
 
     it('applies the status filter when given', async () => {
