@@ -533,5 +533,72 @@ describe('LineChart', () => {
       fixture.detectChanges();
       expect(el.classList.contains('dragging')).toBe(false);
     });
+
+    it('pans the visible window on a pointer drag', () => {
+      set({
+        series: [
+          series([
+            { x: 0, y: 1 },
+            { x: 100, y: 2 },
+          ]),
+        ],
+        showXAxis: true,
+        xUnit: ' m',
+      });
+      mockRect();
+      const el = svg();
+      el.setPointerCapture = vi.fn() as unknown as typeof el.setPointerCapture;
+
+      // Zoom in first — panning a fully-zoomed-out chart has nowhere to go,
+      // since the visible window already spans the whole clamped domain.
+      el.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: -400,
+          ctrlKey: true,
+          clientX: 250,
+          clientY: 40,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      fixture.detectChanges();
+      const zoomedLeft = geometry()!.left;
+
+      el.dispatchEvent(
+        new PointerEvent('pointerdown', { pointerId: 1, clientX: 300, bubbles: true }),
+      );
+      el.dispatchEvent(
+        new PointerEvent('pointermove', { pointerId: 1, clientX: 250, bubbles: true }),
+      );
+      fixture.detectChanges();
+
+      // Dragging left-to-right by 50px pans the window forward (right).
+      expect(geometry()!.left).toBeGreaterThan(zoomedLeft);
+
+      // A move from a pointer that never went down (or already lifted) is ignored.
+      el.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+      const afterUp = geometry()!.left;
+      el.dispatchEvent(
+        new PointerEvent('pointermove', { pointerId: 1, clientX: 100, bubbles: true }),
+      );
+      fixture.detectChanges();
+      expect(geometry()!.left).toBe(afterUp);
+    });
+  });
+
+  describe('display decimation', () => {
+    it('keeps the envelope of a dense series once zoomed past the bucket count', () => {
+      const points = Array.from({ length: 2000 }, (_, i) => ({
+        x: i,
+        y: Math.sin(i / 10) * 50,
+      }));
+      set({ series: [series(points)] });
+
+      const d = geometry()!.lines[0].d;
+      // Decimated to roughly the bucket count, not all 2000 raw points.
+      const segments = (d.match(/[ML]/g) ?? []).length;
+      expect(segments).toBeGreaterThan(0);
+      expect(segments).toBeLessThan(points.length);
+    });
   });
 });

@@ -106,6 +106,14 @@
       "lcov",
       "json-summary"
     ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 97,
+        "branches": 85,
+        "functions": 97,
+        "lines": 97
+      }
+    },
     "testEnvironment": "node",
     "roots": [
       "<rootDir>/libs/",
