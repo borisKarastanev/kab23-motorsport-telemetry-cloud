@@ -1,17 +1,27 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, WritableSignal, computed, signal } from '@angular/core';
 import { Socket, io } from 'socket.io-client';
 import { environment } from '../../../environments/environment';
 import { LiveFrame, LiveSessionEvent, LiveState, TracePoint } from '../models/live-telemetry.model';
 
 /**
- * Roughly five minutes of trace at 10 Hz.
+ * Roughly five minutes of history at 10 Hz.
  *
  * The cap is not an optimisation. A manager leaves this tab open for a whole
  * track day, and an unbounded array would be 36 000 points an hour, per car,
  * re-scanned on every render. Full history is what the session telemetry
- * endpoint is for.
+ * endpoint is for. Bounds both the GPS trace and the channel history below —
+ * same rationale, same rate.
  */
-const MAX_TRACE_POINTS = 3_000;
+const MAX_LIVE_POINTS = 3_000;
+
+/** One CAN sample, `t` seconds elapsed since this session's first sample. */
+export interface ChannelPoint {
+  t: number;
+  speed: number | null;
+  rpm: number | null;
+  coolant: number | null;
+  oil: number | null;
+}
 
 @Injectable()
 export class LiveTelemetryService {
@@ -20,12 +30,27 @@ export class LiveTelemetryService {
 
   private readonly frame = signal<LiveFrame | null>(null);
   private readonly points = signal<TracePoint[]>([]);
+  private readonly channelPoints = signal<ChannelPoint[]>([]);
   private readonly status = signal<LiveState>('idle');
   private readonly session = signal<string | null>(null);
   private readonly failure = signal<string | null>(null);
 
+  /** `t` of this session's first sample — the origin the chart's x axis is relative to. */
+  private sessionStartT: number | null = null;
+
+  /**
+   * The session the buffers currently hold data for.
+   *
+   * Separate from the `session` signal: that one answers "is a session
+   * running" and goes null on `stop`, while this one answers "whose samples
+   * are in `points`/`channelPoints`" and only changes when a genuinely
+   * different session's data starts arriving.
+   */
+  private openSessionId: string | null = null;
+
   readonly latest = this.frame.asReadonly();
   readonly trace = this.points.asReadonly();
+  readonly channels = this.channelPoints.asReadonly();
   readonly state = this.status.asReadonly();
   readonly error = this.failure.asReadonly();
 
@@ -115,14 +140,33 @@ export class LiveTelemetryService {
     this.carId = null;
     this.frame.set(null);
     this.points.set([]);
+    this.channelPoints.set([]);
+    this.sessionStartT = null;
+    // Unlike `stop`, this really is a full teardown: the next car's first
+    // frame must re-anchor even if it happens to belong to the same session.
+    this.openSessionId = null;
     this.session.set(null);
     this.failure.set(null);
     this.status.set('idle');
   }
 
   private onFrame(payload: LiveFrame): void {
+    // A viewer that joined mid-session never saw its `start` event, so the
+    // first frame observed is the only origin available — and a frame can
+    // also simply beat the `start` event here. Either way this is what
+    // anchors the buffers to the right session; see `beginSessionIfNew`.
+    this.beginSessionIfNew(payload.sessionId, payload.t);
+
     this.frame.set(payload);
     this.session.set(payload.sessionId);
+
+    appendCapped(this.channelPoints, {
+      t: (payload.t - this.sessionStartT!) / 1000,
+      speed: payload.speed ?? null,
+      rpm: payload.rpm ?? null,
+      coolant: payload.coolant ?? null,
+      oil: payload.oil ?? null,
+    });
 
     if (payload.lat == null || payload.lon == null) {
       // No fix yet — CAN data is still worth showing on the gauges, but a
@@ -130,15 +174,7 @@ export class LiveTelemetryService {
       return;
     }
 
-    this.points.update((existing) => {
-      // Trimmed on the way in rather than after appending: at the cap, growing
-      // then slicing copies the whole 3 000-point array twice per frame, ten
-      // times a second, for one new point.
-      const from = Math.max(0, existing.length - MAX_TRACE_POINTS + 1);
-      const next = existing.slice(from);
-      next.push({ lat: payload.lat!, lon: payload.lon! });
-      return next;
-    });
+    appendCapped(this.points, { lat: payload.lat!, lon: payload.lon! });
   }
 
   private onEvent(payload: LiveSessionEvent): void {
@@ -148,13 +184,54 @@ export class LiveTelemetryService {
       // the *existing* session — so this arrives more than once for one run.
       // Clearing unconditionally would blank a watching manager's map every
       // time the car's uplink retried. Devices are expected to re-send.
-      if (payload.sessionId !== this.session()) {
-        this.points.set([]);
-        this.session.set(payload.sessionId);
-      }
+      this.beginSessionIfNew(payload.sessionId, payload.t);
+      this.session.set(payload.sessionId);
       return;
     }
 
+    // `openSessionId` deliberately survives `stop`: it identifies whose data
+    // the buffers hold, not whether a session is running. Clearing it here
+    // would make a straggler frame arriving after `stop` look like a brand
+    // new session and wipe the trace a viewer is still looking at.
     this.session.set(null);
   }
+
+  /**
+   * Reset the buffers onto a new session, if this id is not the one they
+   * already hold.
+   *
+   * Called from **both** `onFrame` and the `start` event because the two
+   * arrive on different Redis channels and so have no guaranteed order. When
+   * a frame wins the race, this is what stops the new session's samples being
+   * appended to the previous session's — which for the charts also means
+   * appended against the previous session's `t` origin, putting the whole
+   * visible window hours wide and squashing the live trace into a sliver at
+   * the right edge until the 5-minute buffer rolled over.
+   */
+  private beginSessionIfNew(sessionId: string, startT: number): void {
+    if (sessionId === this.openSessionId) {
+      return;
+    }
+
+    this.openSessionId = sessionId;
+    this.sessionStartT = startT;
+    this.points.set([]);
+    this.channelPoints.set([]);
+  }
+}
+
+/**
+ * Append one point to a bounded rolling buffer.
+ *
+ * Trimmed on the way in rather than after appending: at the cap, growing then
+ * slicing copies the whole 3 000-point array twice per frame, ten times a
+ * second, for one new point. Shared by the GPS trace and the channel history
+ * so the two cannot end up with different caps or different trim behaviour.
+ */
+function appendCapped<T>(buffer: WritableSignal<T[]>, point: T): void {
+  buffer.update((existing) => {
+    const next = existing.slice(Math.max(0, existing.length - MAX_LIVE_POINTS + 1));
+    next.push(point);
+    return next;
+  });
 }

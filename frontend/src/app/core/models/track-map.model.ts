@@ -52,6 +52,12 @@ export interface TrackMapBbox {
 
 export interface TrackMapResponse {
   status: 'ready' | 'pending' | 'unavailable';
+  /**
+   * The circuit's human name. Present on every status — the server resolved
+   * the opaque device track string to a row to answer at all, so it can
+   * always say what that row is called.
+   */
+  trackName: string;
   map?: TrackMapGeoJson;
   bbox?: TrackMapBbox;
   centrelineLengthM?: number;

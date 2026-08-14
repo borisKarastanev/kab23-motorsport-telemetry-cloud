@@ -1,3 +1,4 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Response } from 'express';
@@ -5,8 +6,16 @@ import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { AUTH_COOKIE } from './auth.constants';
+import { TokenRevocationService } from './token-revocation.service';
 
 const user = { id: 'e3b0c442-98fc-4c14-9afb-f4c8996fb924' } as User;
+
+/** Nothing revoked, nothing recorded — the default for tests not about that. */
+const noRevocations = () =>
+  ({
+    revoke: jest.fn().mockResolvedValue(undefined),
+    isRevoked: jest.fn().mockResolvedValue(false),
+  }) as unknown as jest.Mocked<TokenRevocationService>;
 
 describe('AuthService cookie attributes', () => {
   const serviceFor = (nodeEnv: string) => {
@@ -15,13 +24,20 @@ describe('AuthService cookie attributes', () => {
       get: (key: string) => ({ NODE_ENV: nodeEnv, JWT_EXPIRATION: 3600 })[key],
     } as unknown as ConfigService;
 
+    const revocations = noRevocations();
     const service = new AuthService(
       config,
       { sign: () => 'a.jwt.token' } as unknown as JwtService,
       {} as UsersService,
+      revocations,
     );
 
-    return { service, cookie, response: { cookie } as unknown as Response };
+    return {
+      service,
+      cookie,
+      revocations,
+      response: { cookie } as unknown as Response,
+    };
   };
 
   const attributesOf = (cookie: jest.Mock, call = 0) =>
@@ -65,11 +81,11 @@ describe('AuthService cookie attributes', () => {
    * original can leave the real cookie in place, so `logout` returns 200 and the
    * viewer stays signed in.
    */
-  it('clears the cookie with exactly the attributes it was set with', () => {
+  it('clears the cookie with exactly the attributes it was set with', async () => {
     const { service, cookie, response } = serviceFor('production');
 
     service.login(user, response);
-    service.logout(response);
+    await service.logout(response);
 
     const [set, cleared] = [attributesOf(cookie, 0), attributesOf(cookie, 1)];
 
@@ -99,6 +115,7 @@ describe('AuthService.userFromToken', () => {
       {} as ConfigService,
       jwtService,
       usersService,
+      noRevocations(),
     );
 
     await expect(service.userFromToken('a.jwt.token')).resolves.toEqual({
@@ -118,10 +135,114 @@ describe('AuthService.userFromToken', () => {
       {} as ConfigService,
       jwtService,
       {} as UsersService,
+      noRevocations(),
     );
 
     await expect(service.userFromToken('stale.jwt.token')).rejects.toThrow(
       'jwt expired',
     );
+  });
+
+  it('rejects a signed-out token even though its signature is still valid', async () => {
+    // The WebSocket handshake does not go through `JwtStrategy`, so this is
+    // the only place a revoked cookie is caught before a socket starts
+    // streaming a team's live GPS.
+    const jwtService = {
+      verifyAsync: jest
+        .fn()
+        .mockResolvedValue({ userId: user.id, jti: 'revoked', exp: 1 }),
+    } as unknown as JwtService;
+    const usersService = {
+      fetchUser: jest.fn().mockResolvedValue(user),
+    } as unknown as UsersService;
+    const revocations = noRevocations();
+    revocations.isRevoked.mockResolvedValue(true);
+
+    const service = new AuthService(
+      {} as ConfigService,
+      jwtService,
+      usersService,
+      revocations,
+    );
+
+    await expect(service.userFromToken('signed.out.token')).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(usersService.fetchUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthService session lifetime', () => {
+  const serviceWith = (jwtService: JwtService) => {
+    const cookie = jest.fn();
+    const revocations = noRevocations();
+    const service = new AuthService(
+      {
+        get: (key: string) =>
+          ({ NODE_ENV: 'development', JWT_EXPIRATION: 86400 })[key],
+      } as unknown as ConfigService,
+      jwtService,
+      {} as UsersService,
+      revocations,
+    );
+    return {
+      service,
+      cookie,
+      revocations,
+      response: { cookie } as unknown as Response,
+    };
+  };
+
+  it('gives every issued token its own id, so revoking one spares the rest', () => {
+    // Two tabs, two logins, two tokens. Signing out of one must not be able
+    // to take the other down with it.
+    const signed: Record<string, unknown>[] = [];
+    const jwtService = {
+      sign: jest.fn((payload: Record<string, unknown>) => {
+        signed.push(payload);
+        return 'a.jwt.token';
+      }),
+    } as unknown as JwtService;
+    const { service, response } = serviceWith(jwtService);
+
+    service.login(user, response);
+    service.login(user, response);
+
+    expect(signed).toHaveLength(2);
+    expect(signed[0].jti).toBeTruthy();
+    expect(signed[1].jti).toBeTruthy();
+    expect(signed[0].jti).not.toBe(signed[1].jti);
+  });
+
+  it('revokes the presented token on logout, for the life it had left', async () => {
+    const { service, revocations, response } = serviceWith({
+      sign: () => 'a.jwt.token',
+    } as unknown as JwtService);
+
+    await service.logout(response, {
+      userId: user.id,
+      jti: 'token-1',
+      exp: 42,
+    });
+
+    expect(revocations.revoke).toHaveBeenCalledWith('token-1', 42);
+  });
+
+  it('re-issues through the same path as login, so a refreshed cookie is identical', () => {
+    // `SlidingSessionInterceptor` calls `issueCookie` directly. If it drifted
+    // from `login` — a different maxAge, a missing `secure` — an active
+    // session would quietly change shape partway through.
+    const { service, cookie, response } = serviceWith({
+      sign: () => 'a.jwt.token',
+    } as unknown as JwtService);
+
+    service.login(user, response);
+    service.issueCookie(user, response);
+
+    const [first, second] = [cookie.mock.calls[0], cookie.mock.calls[1]];
+    expect(second[0]).toBe(first[0]);
+    expect(second[2].httpOnly).toBe(first[2].httpOnly);
+    expect(second[2].secure).toBe(first[2].secure);
+    expect(second[2].sameSite).toBe(first[2].sameSite);
   });
 });

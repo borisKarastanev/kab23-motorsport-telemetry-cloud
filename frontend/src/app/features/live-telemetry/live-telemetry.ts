@@ -1,8 +1,9 @@
 import { Component, OnDestroy, computed, effect, inject, input } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { CarsService } from '../../core/services/cars.service';
-import { LiveTelemetryService } from '../../core/services/live-telemetry.service';
+import { ChannelPoint, LiveTelemetryService } from '../../core/services/live-telemetry.service';
 import { TrackMapService } from '../../core/services/track-map.service';
+import { CHANNEL_COLOUR, ChartSeries, LineChart } from '../../core/charts/line-chart';
 import { Gauges } from './gauges';
 import { TrackTrace } from './track-trace';
 
@@ -16,7 +17,7 @@ import { TrackTrace } from './track-trace';
  */
 @Component({
   selector: 'app-live-telemetry',
-  imports: [Gauges, RouterLink, TrackTrace],
+  imports: [Gauges, LineChart, RouterLink, TrackTrace],
   templateUrl: './live-telemetry.html',
   styleUrl: './live-telemetry.scss',
   // One socket per view, not one per application: see the service's own note.
@@ -68,5 +69,41 @@ export class LiveTelemetry implements OnDestroy {
 
   protected async select(carId: string): Promise<void> {
     await this.router.navigate(['/live', carId]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chart series
+  // ---------------------------------------------------------------------------
+
+  protected readonly speedSeries = computed(() => [
+    this.channel('Speed', CHANNEL_COLOUR.active, (p) => p.speed),
+  ]);
+
+  protected readonly rpmSeries = computed(() => [
+    this.channel('RPM', CHANNEL_COLOUR.active, (p) => p.rpm),
+  ]);
+
+  protected readonly tempSeries = computed(() => [
+    this.channel('Coolant', CHANNEL_COLOUR.coolant, (p) => p.coolant),
+    this.channel('Oil', CHANNEL_COLOUR.oil, (p) => p.oil),
+  ]);
+
+  /**
+   * One channel of live history as a chart series.
+   *
+   * `x` is session-elapsed seconds, passed through as-is: the chart scales to
+   * its data's own `[min, max]`, so a rolling window whose oldest point is no
+   * longer at zero still fills the plot.
+   */
+  private channel(
+    label: string,
+    colour: string,
+    pick: (point: ChannelPoint) => number | null,
+  ): ChartSeries {
+    return {
+      label,
+      colour,
+      points: this.live.channels().map((p) => ({ x: p.t, y: pick(p) })),
+    };
   }
 }

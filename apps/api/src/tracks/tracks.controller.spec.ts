@@ -81,6 +81,9 @@ describe('TracksController', () => {
       expect(trackMapService.get).toHaveBeenCalledWith(spa);
       expect(result).toEqual({
         status: 'ready',
+        // The name the *server* resolved, so the browser never has to
+        // re-implement the slug-or-deviceTrackIds match to label the chart.
+        trackName: 'Spa-Francorchamps',
         map: { type: 'FeatureCollection', features: [] },
         bbox: undefined,
         centrelineLengthM: 7004,
@@ -95,6 +98,7 @@ describe('TracksController', () => {
 
       await expect(controller.getMap('spa')).resolves.toEqual({
         status: 'pending',
+        trackName: 'Spa-Francorchamps',
       });
     });
   });

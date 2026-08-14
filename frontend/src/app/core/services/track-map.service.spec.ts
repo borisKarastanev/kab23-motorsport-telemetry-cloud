@@ -22,10 +22,12 @@ describe('TrackMapService', () => {
 
   // Trailing await is load-bearing, as in CarsService's spec: the resource
   // writes its value from a microtask after `flush()` delivers it.
-  const flush = async (body: TrackMapResponse) => {
+  // `trackName` is defaulted so the tests below can stay about the field each
+  // one is actually asserting; the server sends it on every status.
+  const flush = async (body: Omit<TrackMapResponse, 'trackName'> & { trackName?: string }) => {
     TestBed.tick();
     const req = http.expectOne((r) => r.url.includes('/tracks/'));
-    req.flush(body);
+    req.flush({ trackName: 'Serres Automotive Park', ...body });
     TestBed.tick();
     await Promise.resolve();
   };
@@ -55,7 +57,10 @@ describe('TrackMapService', () => {
 
     const req = http.expectOne(() => true);
     expect(req.request.url).toContain('/tracks/serres-automotive/map');
-    req.flush({ status: 'unavailable' } satisfies TrackMapResponse);
+    req.flush({
+      status: 'unavailable',
+      trackName: 'Serres Automotive Park',
+    } satisfies TrackMapResponse);
   });
 
   it('exposes no map for an unavailable track, without erroring', async () => {
@@ -221,6 +226,7 @@ describe('TrackMapService', () => {
       expect(req.request.url).toContain('/tracks/serres-automotive/map');
       req.flush({
         status: 'ready',
+        trackName: 'Serres Automotive Park',
         map: { type: 'FeatureCollection', features: [] },
       } satisfies TrackMapResponse);
       TestBed.tick();
@@ -250,6 +256,43 @@ describe('TrackMapService', () => {
       // `/tracks/null/map`.
       http.expectNone(() => true);
       expect(service.map()).toBeNull();
+    });
+  });
+
+  describe('trackName', () => {
+    it('is null while no track is open', () => {
+      expect(service.trackName()).toBeNull();
+    });
+
+    it('reads the name the server resolved, not one matched in the browser', async () => {
+      // The car reports the opaque id its own on-car database uses, e.g.
+      // "52a619159ac25e7d6beb0e53" — never our slug. Resolving that is
+      // `TracksService.resolve`'s job, and the answer comes back on the map
+      // response, so nothing here re-implements the match.
+      service.open('52a619159ac25e7d6beb0e53');
+      await flush({ status: 'unavailable', trackName: 'Kaloyanovo' });
+
+      expect(service.trackName()).toBe('Kaloyanovo');
+    });
+
+    it('is still named when the map itself is unavailable', async () => {
+      service.open('serres-automotive');
+      await flush({ status: 'unavailable', failureReason: 'no-raceway-ways' });
+
+      expect(service.map()).toBeNull();
+      expect(service.trackName()).toBe('Serres Automotive Park');
+    });
+
+    it('is null when the track does not resolve at all, same as its map', async () => {
+      // A 404 — `GET /tracks/:track/map` answers that when the string
+      // resolves to no row, which is a first-class answer here.
+      service.open('some-unseeded-device-track-id');
+      TestBed.tick();
+      http.expectOne(() => true).flush('nope', { status: 404, statusText: 'Not Found' });
+      TestBed.tick();
+      await Promise.resolve();
+
+      expect(service.trackName()).toBeNull();
     });
   });
 

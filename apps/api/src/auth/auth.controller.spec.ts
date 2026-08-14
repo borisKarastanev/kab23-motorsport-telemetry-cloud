@@ -55,13 +55,25 @@ describe('AuthController', () => {
   });
 
   describe('logout', () => {
-    it('clears the cookie and reports success', () => {
+    it("revokes the caller's own token and reports success", async () => {
+      // The payload, not just the response: revocation is per token, so that
+      // signing out here leaves the same user's other devices alone.
+      const response = {} as Response;
+      const payload = { userId: 'user-1', jti: 'token-1', exp: 9999 };
+
+      await expect(controller.logout(payload, response)).resolves.toEqual({
+        success: true,
+      });
+      expect(authService.logout).toHaveBeenCalledWith(response, payload);
+    });
+
+    it('still clears the cookie for a token minted before jti existed', async () => {
       const response = {} as Response;
 
-      const result = controller.logout(response);
-
-      expect(authService.logout).toHaveBeenCalledWith(response);
-      expect(result).toEqual({ success: true });
+      await expect(controller.logout(undefined, response)).resolves.toEqual({
+        success: true,
+      });
+      expect(authService.logout).toHaveBeenCalledWith(response, undefined);
     });
   });
 

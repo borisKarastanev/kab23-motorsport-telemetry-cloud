@@ -129,8 +129,12 @@ describe('circuit geometry', () => {
       straightest = Math.min(straightest, Math.abs(k));
     }
 
-    expect(1 / tightest).toBeGreaterThan(25);
-    expect(1 / tightest).toBeLessThan(45);
+    // 14.1 m: Kaloyanovo's actual tightest corner, since WAYPOINTS became a
+    // real recorded lap rather than a designed shape — genuinely tighter than
+    // the old hairpin's 32 m. Bounds keep a few metres of slack either side
+    // rather than pinning the exact figure.
+    expect(1 / tightest).toBeGreaterThan(10);
+    expect(1 / tightest).toBeLessThan(20);
     expect(1 / straightest).toBeGreaterThan(1000);
   });
 });

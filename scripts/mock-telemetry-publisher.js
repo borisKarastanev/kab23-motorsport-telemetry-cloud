@@ -6,13 +6,16 @@
  * wire contract the dash will (see libs/common/src/constants/mqtt-topics.ts and
  * ~/development/phase2-pi-cloud-uplink-plan.md).
  *
- * The car drives a **synthetic circuit anchored on Kaloyanovo's real, confirmed
- * start/finish gate** (scripts/lib/circuit.js). This is the Phase 4
- * prerequisite: the previous version traced an arbitrary ~110 m circle with no
- * gate anywhere near it and with speed/rpm/g as sine waves unrelated to the
- * path, so lap segmentation and braking-point detection had nothing real to
- * work against. Speed now falls out of the track's curvature, and the g
- * channels out of the speed, so the channels and the geometry agree.
+ * The car drives **Kaloyanovo's real recorded layout, anchored on its real,
+ * confirmed start/finish gate** (scripts/lib/circuit.js — the shape is
+ * arc-length resampled from an actual GPS lap, not hand-drawn). This is the
+ * Phase 4 prerequisite: the previous version traced an arbitrary ~110 m circle
+ * with no gate anywhere near it and with speed/rpm/g as sine waves unrelated
+ * to the path, so lap segmentation and braking-point detection had nothing
+ * real to work against. Speed and rpm are still synthesised, though — they
+ * fall out of the (real) track's curvature via a quasi-steady-state lap sim,
+ * and the g channels out of that speed, so the channels and the geometry
+ * agree with each other even though neither is replayed from the recording.
  *
  * The broker is no longer anonymous, so this needs a car's credentials — issue
  * them with `POST /cars/:id/mqtt-credentials` and pass the secret in
@@ -33,12 +36,12 @@
  *                   on Ctrl-C, as the synthetic circuit does.
  *   --seed <n>      PRNG seed for the circuit's per-lap variation (default
  *                   20260805). Same seed, same laps.
- *   --lap-m <n>     lap length in metres (default 2100, a plausible club
- *                   circuit). The shape is scaled but still fitted to the same
- *                   real gate, so it crosses correctly at any size — 600 m
- *                   gives ~30 s laps at 44–133 km/h, which is what makes an
- *                   end-to-end lap-derivation check take two minutes instead
- *                   of four and a half.
+ *   --lap-m <n>     lap length in metres (default 2838, Kaloyanovo's own
+ *                   measured length). The real shape is scaled but still
+ *                   fitted to the same real gate, so it crosses correctly at
+ *                   any size — 600 m gives ~35 s laps at 31–115 km/h, which is
+ *                   what makes an end-to-end lap-derivation check take a
+ *                   couple of minutes instead of ten.
  *
  * Options (env):
  *   DROP_EVERY=30   simulate a 5 s link outage every 30 s: frames are spooled
@@ -203,7 +206,7 @@ client.on('connect', () => {
   console.log(
     replayFile
       ? `[mock] replaying ${replayFile}`
-      : `[mock] driving the synthetic ${KALOYANOVO.name} circuit ` +
+      : `[mock] driving the real ${KALOYANOVO.name} layout ` +
           `(${Math.round(source.lapLengthM)} m lap, seed ${seed}, GPS noise ${gpsNoiseM} m)`,
   );
 

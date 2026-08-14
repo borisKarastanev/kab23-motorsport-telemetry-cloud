@@ -113,6 +113,22 @@
   }
 }
 
+/**
+ * Sticks to the viewport top once its normal spot scrolls past it, so the
+ * numbers a pit wall actually watches don't disappear behind the map/charts
+ * below. `position: sticky` alone gives the "back to its defined position on
+ * scroll-up" behaviour for free — no scroll listener, no JS.
+ */
+app-gauges {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  background: var(--surface);
+  margin-inline: -1.25rem;
+  padding: 0.75rem 1.25rem;
+  border-block-end: 1px solid var(--border);
+}
+
 .panel-head {
   display: flex;
   align-items: center;
@@ -121,6 +137,10 @@
   h1 {
     margin: 0;
     font-size: 1.25rem;
+  }
+
+  .track {
+    font-size: 0.9rem;
   }
 }
 
@@ -132,6 +152,11 @@
   background: var(--bg);
   border-radius: 0.5rem;
   padding: 0.5rem;
+}
+
+.charts {
+  display: grid;
+  gap: 1.5rem;
 }
 
 .meta {

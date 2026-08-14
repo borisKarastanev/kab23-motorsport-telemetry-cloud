@@ -1,11 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { randomUUID } from 'crypto';
 import { Response } from 'express';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { AUTH_COOKIE } from './auth.constants';
 import { TokenPayload } from './interfaces/token-payload.interface';
+import { TokenRevocationService } from './token-revocation.service';
 
 @Injectable()
 export class AuthService {
@@ -13,10 +15,24 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly jwtService: JwtService,
     private readonly usersService: UsersService,
+    private readonly revocations: TokenRevocationService,
   ) {}
 
   login(user: User, response: Response): User {
-    const tokenPayload: TokenPayload = { userId: user.id };
+    this.issueCookie(user, response);
+    return user;
+  }
+
+  /**
+   * Mint a token for this user and set it as the auth cookie.
+   *
+   * Shared by `login` and by `SlidingSessionInterceptor`, which re-issues on
+   * activity — the two must produce identical cookies (same attributes, same
+   * lifetime) or a refresh would quietly change the session's shape. Each
+   * call gets a fresh `jti`, so revoking one token never touches another.
+   */
+  issueCookie(user: User, response: Response): void {
+    const tokenPayload: TokenPayload = { userId: user.id, jti: randomUUID() };
 
     const expires = new Date();
     expires.setSeconds(
@@ -29,11 +45,18 @@ export class AuthService {
       ...this.cookieAttributes(),
       expires,
     });
-
-    return user;
   }
 
-  logout(response: Response): void {
+  /**
+   * Sign out: revoke the token, then clear the cookie.
+   *
+   * Revoking first, and awaiting it, so the response cannot report a
+   * successful logout while the token it just invalidated is still being
+   * written to Redis.
+   */
+  async logout(response: Response, token?: TokenPayload): Promise<void> {
+    await this.revocations.revoke(token?.jti, token?.exp);
+
     response.cookie(AUTH_COOKIE, '', {
       // Same attributes as `login`, not just `httpOnly`. A browser treats
       // (name, domain, path) as the cookie's identity but will refuse to
@@ -79,6 +102,14 @@ export class AuthService {
    */
   async userFromToken(token: string): Promise<{ user: User; exp?: number }> {
     const payload = await this.jwtService.verifyAsync<TokenPayload>(token);
+
+    // A revoked token is as good as an invalid one, and has to be rejected
+    // here too: the WebSocket handshake does not go through `JwtStrategy`, so
+    // without this a socket opened with a signed-out cookie would keep
+    // streaming a team's live GPS until the token's own expiry.
+    if (await this.revocations.isRevoked(payload.jti)) {
+      throw new UnauthorizedException();
+    }
 
     return {
       user: await this.usersService.fetchUser({ id: payload.userId }),

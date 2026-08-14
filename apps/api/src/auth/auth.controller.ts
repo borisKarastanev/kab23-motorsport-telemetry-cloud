@@ -16,6 +16,8 @@ import { CreateUserDto } from '../users/dto/create-user.dto';
 import { User } from '../users/entities/user.entity';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { CurrentToken } from './current-token.decorator';
+import { TokenPayload } from './interfaces/token-payload.interface';
 
 @Controller('auth')
 @UseInterceptors(ClassSerializerInterceptor)
@@ -41,8 +43,14 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
-  logout(@Res({ passthrough: true }) response: Response): { success: boolean } {
-    this.authService.logout(response);
+  async logout(
+    // The payload, not just the user: revocation names the individual token,
+    // so that signing out here does not sign the same person out on their
+    // other devices. `JwtStrategy` put it on the request.
+    @CurrentToken() token: TokenPayload | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ success: boolean }> {
+    await this.authService.logout(response, token);
     return { success: true };
   }
 

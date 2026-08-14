@@ -61,6 +61,9 @@ export class TracksController {
       throw new NotFoundException('Track not found');
     }
 
-    return toTrackMapResponseDto(await this.trackMapService.get(resolved));
+    return toTrackMapResponseDto(
+      await this.trackMapService.get(resolved),
+      resolved.name,
+    );
   }
 }

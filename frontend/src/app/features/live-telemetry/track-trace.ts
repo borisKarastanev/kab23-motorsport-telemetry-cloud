@@ -55,7 +55,7 @@ interface WorldGeometry {
  * whole circuit" to see it through one corner in detail.
  *
  * **The view fits the circuit, not the moving trace, once one is known.**
- * Without a map the frame has always chased the last `MAX_TRACE_POINTS` of
+ * Without a map the frame has always chased the last `MAX_LIVE_POINTS` of
  * GPS — reasonable when there is nothing else to anchor to. With a map, doing
  * that would make the *track* appear to slide under a car that is, in truth,
  * the only thing moving; fitting the circuit's own extent instead holds the

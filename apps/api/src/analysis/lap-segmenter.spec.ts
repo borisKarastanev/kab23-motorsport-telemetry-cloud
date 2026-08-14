@@ -39,7 +39,10 @@ interface MockDrive {
 
 /** Drive the synthesized Kaloyanovo circuit at 10 Hz, as the mock does. */
 function driveMock({
-  seconds = 260,
+  // 260 s used to comfortably cover 3 laps of the old ~2100 m hand-drawn
+  // shape; the real recorded circuit is ~2838 m and ~84 s/lap, so 260 s only
+  // just fails to complete a third lap. 360 s covers four with margin.
+  seconds = 360,
   dtMs = 100,
   seed = 20260805,
 } = {}): MockDrive {

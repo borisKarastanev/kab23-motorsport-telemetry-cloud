@@ -4,7 +4,10 @@ import { PENDING } from '../track-map.types';
 
 describe('toTrackMapResponseDto', () => {
   it('maps PENDING to a bare pending status', () => {
-    expect(toTrackMapResponseDto(PENDING)).toEqual({ status: 'pending' });
+    expect(toTrackMapResponseDto(PENDING, 'Kaloyanovo')).toEqual({
+      status: 'pending',
+      trackName: 'Kaloyanovo',
+    });
   });
 
   it('maps an unavailable row to its failure reason, and nothing else', () => {
@@ -14,8 +17,11 @@ describe('toTrackMapResponseDto', () => {
       fetchedAt: new Date(),
     });
 
-    expect(toTrackMapResponseDto(row)).toEqual({
+    // The name rides along even here: the racing line still renders, and the
+    // browser has no other way to turn its opaque track string into a name.
+    expect(toTrackMapResponseDto(row, 'Kaloyanovo')).toEqual({
       status: 'unavailable',
+      trackName: 'Kaloyanovo',
       failureReason: 'no-raceway-ways',
     });
   });
@@ -35,8 +41,9 @@ describe('toTrackMapResponseDto', () => {
       fetchedAt: new Date(),
     });
 
-    expect(toTrackMapResponseDto(row)).toEqual({
+    expect(toTrackMapResponseDto(row, 'Serres Automotive Park')).toEqual({
       status: 'ready',
+      trackName: 'Serres Automotive Park',
       map: { type: 'FeatureCollection', features: [] },
       bbox: { minLat: 41, minLon: 23, maxLat: 41.1, maxLon: 23.1 },
       centrelineLengthM: 3175,
@@ -52,6 +59,8 @@ describe('toTrackMapResponseDto', () => {
       fetchedAt: new Date(),
     });
 
-    expect(toTrackMapResponseDto(row).failureReason).toBeUndefined();
+    expect(
+      toTrackMapResponseDto(row, 'Kaloyanovo').failureReason,
+    ).toBeUndefined();
   });
 });
