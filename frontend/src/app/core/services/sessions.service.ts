@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { httpResource } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { SessionListItem } from '../models/analysis.model';
+import { guarded } from '../resource';
 
 /**
  * The caller's visible sessions, newest first.
@@ -29,7 +30,12 @@ export class SessionsService {
     { defaultValue: [] },
   );
 
-  readonly value = this.sessions.value;
+  /**
+   * Empty rather than thrown; see `guarded`. This one matters doubly — the
+   * view has an `error()` branch to render the failure, and a bare `value()`
+   * threw before that branch could ever be reached.
+   */
+  readonly value = guarded(this.sessions, [] as SessionListItem[]);
   readonly loading = this.sessions.isLoading;
   readonly error = this.sessions.error;
 }

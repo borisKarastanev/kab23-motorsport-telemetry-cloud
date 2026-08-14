@@ -9,12 +9,7 @@
     <span class="pill">Not analyzed</span>
   }
 
-  <button
-    type="button"
-    class="ghost-button"
-    [disabled]="recomputing()"
-    (click)="recompute()"
-  >
+  <button type="button" class="ghost-button" [disabled]="recomputing()" (click)="recompute()">
     {{ recomputing() ? 'Re-analyzing…' : 'Re-analyze' }}
   </button>
 </header>
@@ -30,8 +25,8 @@
       <p class="muted">{{ message }}</p>
       @if (analysis.reason() === 'no-crossings') {
         <p class="muted">
-          A corrected start/finish line is picked up on the next load — there is
-          nothing to undo first.
+          A corrected start/finish line is picked up on the next load — there is nothing to undo
+          first.
         </p>
       }
     </section>
@@ -61,6 +56,8 @@
           [points]="activePoints()"
           [ghostPoints]="referencePoints()"
           [brakingPoints]="brakingPoints()"
+          [trackMap]="trackMap.map()"
+          [resetKey]="id()"
         />
       </div>
       <footer class="map-key muted">
@@ -69,6 +66,9 @@
         <span><span class="dot brake"></span>braking point</span>
         @if (analysis.referenceLap(); as reference) {
           <span><span class="swatch ghost"></span>lap {{ reference }}</span>
+        }
+        @if (trackMap.attribution(); as attribution) {
+          <span class="attribution">{{ attribution }}</span>
         }
       </footer>
     </section>

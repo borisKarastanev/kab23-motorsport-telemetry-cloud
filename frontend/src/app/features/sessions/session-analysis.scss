@@ -73,7 +73,10 @@
   display: grid;
   gap: 1.25rem;
   padding: 1.5rem;
-  max-inline-size: 76rem;
+  // Wide enough that the racing line resolves corner-by-corner rather than
+  // as a smudge, capped so the lap table and charts don't stretch into
+  // unreadable line lengths on an ultra-wide monitor.
+  max-inline-size: min(94vw, 100rem);
   margin-inline: auto;
 }
 
@@ -136,7 +139,10 @@
 }
 
 .map {
-  block-size: min(60vh, 30rem);
+  // The map is the primary analysis tool on this page, not one panel among
+  // several — tall enough to use most of the viewport's height, so the line
+  // through a corner is legible rather than a few compressed pixels.
+  block-size: min(82vh, 56rem);
   background: var(--bg);
   border-radius: 0.5rem;
   padding: 0.75rem;
@@ -170,11 +176,7 @@
   }
 
   .ghost {
-    background: repeating-linear-gradient(
-      90deg,
-      var(--muted) 0 4px,
-      transparent 4px 7px
-    );
+    background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 7px);
   }
 
   .dot {
@@ -185,6 +187,11 @@
     &.brake {
       background: #e8543f;
     }
+  }
+
+  .attribution {
+    margin-inline-start: auto;
+    opacity: 0.7;
   }
 }
 

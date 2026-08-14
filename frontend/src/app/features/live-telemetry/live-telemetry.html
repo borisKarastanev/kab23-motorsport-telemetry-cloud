@@ -59,6 +59,8 @@
         <app-track-trace
           [points]="live.trace()"
           [position]="live.position()"
+          [trackMap]="trackMap.map()"
+          [resetKey]="carId()"
         />
       </div>
 
@@ -71,6 +73,9 @@
           <span>delivery ~{{ live.latencyMs() }} ms</span>
         }
         <span>{{ live.trace().length }} points</span>
+        @if (trackMap.attribution(); as attribution) {
+          <span class="attribution">{{ attribution }}</span>
+        }
       </footer>
     </section>
   }

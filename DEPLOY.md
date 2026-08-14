@@ -29,6 +29,15 @@ something, use `docker compose exec` instead.
 Port 80 is not optional even though everything redirects off it: Let's Encrypt's
 HTTP-01 challenge is served there.
 
+**Outbound HTTPS is needed too, not just inbound.** The `api` container calls the
+public Overpass API (`overpass-api.de` by default) to fetch a circuit's outline
+the first time anyone asks for it — once per track, ever, then cached in
+`track_maps` forever. No inbound port and no credential is involved; if the box's
+egress is otherwise locked down, allow HTTPS out to `OVERPASS_URL`'s host, or set
+`TRACK_MAP_FETCH_ENABLED=false` to disable the feature outright. Either way a
+missing or blocked fetch degrades to no track overlay, never to a broken racing
+line — see `TrackMapService`'s docblock.
+
 ---
 
 ## 2. First deploy

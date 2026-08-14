@@ -1,12 +1,7 @@
 import { Injectable, computed, signal } from '@angular/core';
 import { Socket, io } from 'socket.io-client';
 import { environment } from '../../../environments/environment';
-import {
-  LiveFrame,
-  LiveSessionEvent,
-  LiveState,
-  TracePoint,
-} from '../models/live-telemetry.model';
+import { LiveFrame, LiveSessionEvent, LiveState, TracePoint } from '../models/live-telemetry.model';
 
 /**
  * Roughly five minutes of trace at 10 Hz.
@@ -34,6 +29,8 @@ export class LiveTelemetryService {
   readonly state = this.status.asReadonly();
   readonly error = this.failure.asReadonly();
 
+  /** The live session id, or null between sessions — for `TrackMapService`. */
+  readonly sessionId = this.session.asReadonly();
   readonly sessionActive = computed(() => this.session() !== null);
 
   /** Where the car is now, or null until the first frame with a fix. */

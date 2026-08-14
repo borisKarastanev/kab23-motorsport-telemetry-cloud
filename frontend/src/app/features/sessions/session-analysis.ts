@@ -1,6 +1,7 @@
-import { Component, computed, effect, inject, input, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { LapAnalysisService } from '../../core/services/lap-analysis.service';
+import { TrackMapService } from '../../core/services/track-map.service';
 import { AnalysisSkipReason } from '../../core/models/analysis.model';
 import { ChartSeries, LineChart } from './line-chart';
 import { LapTable } from './lap-table';
@@ -19,8 +20,7 @@ const REFERENCE_COLOUR = '#8b93a1';
  * looking for a bug in four different places.
  */
 const REASONS: Record<AnalysisSkipReason, string> = {
-  'session-live':
-    'This session is still running. Laps are derived once it closes.',
+  'session-live': 'This session is still running. Laps are derived once it closes.',
   'no-track-gate':
     'No start/finish line on record for this track, so laps cannot be derived. ' +
     'The track a car reports comes from its own database, which is versioned ' +
@@ -52,6 +52,7 @@ const REASONS: Record<AnalysisSkipReason, string> = {
 })
 export class SessionAnalysis {
   protected readonly analysis = inject(LapAnalysisService);
+  protected readonly trackMap = inject(TrackMapService);
 
   /** The `:id` route segment, bound by `withComponentInputBinding()`. */
   readonly id = input.required<string>();
@@ -61,6 +62,13 @@ export class SessionAnalysis {
 
   constructor() {
     effect(() => this.analysis.open(this.id()));
+    // `TrackMapService` is root-provided and shared with the live view, so it
+    // must be told what to show; it resolves the session to its track itself.
+    effect(() => this.trackMap.openForSession(this.id()));
+    // Root-provided means it outlives this view. Without this, leaving the
+    // page mid-`pending` leaves a retry timer armed for a component that no
+    // longer exists, and the departed track's outline stays in memory.
+    inject(DestroyRef).onDestroy(() => this.trackMap.openForSession(null));
   }
 
   /**
@@ -91,9 +99,7 @@ export class SessionAnalysis {
     }
 
     const laps = this.analysis.laps();
-    const reference = laps.find(
-      (lap) => lap.lapNumber === this.analysis.referenceLap(),
-    );
+    const reference = laps.find((lap) => lap.lapNumber === this.analysis.referenceLap());
 
     return {
       time: lapTime(active.lapMs),
@@ -108,23 +114,15 @@ export class SessionAnalysis {
   // ---------------------------------------------------------------------------
 
   /** One name per series, used by both the template and the series builders. */
-  protected readonly activePoints = computed(
-    () => this.analysis.activeTrace()?.points ?? [],
-  );
-  protected readonly referencePoints = computed(
-    () => this.analysis.referenceTrace()?.points ?? [],
-  );
+  protected readonly activePoints = computed(() => this.analysis.activeTrace()?.points ?? []);
+  protected readonly referencePoints = computed(() => this.analysis.referenceTrace()?.points ?? []);
 
   protected readonly brakingPoints = computed(
     () => this.analysis.activeLapRow()?.brakingPoints ?? [],
   );
 
-  protected readonly speedSeries = computed(() =>
-    this.channel((point) => point.speedKmh),
-  );
-  protected readonly rpmSeries = computed(() =>
-    this.channel((point) => point.rpm),
-  );
+  protected readonly speedSeries = computed(() => this.channel((point) => point.speedKmh));
+  protected readonly rpmSeries = computed(() => this.channel((point) => point.rpm));
   protected readonly tempSeries = computed<ChartSeries[]>(() => {
     const points = this.activePoints();
 
@@ -172,10 +170,7 @@ export class SessionAnalysis {
    * panels agree about which line is which without a second legend.
    */
   private channel(
-    pick: (point: {
-      speedKmh: number | null;
-      rpm: number | null;
-    }) => number | null,
+    pick: (point: { speedKmh: number | null; rpm: number | null }) => number | null,
   ): ChartSeries[] {
     const series: ChartSeries[] = [
       {
