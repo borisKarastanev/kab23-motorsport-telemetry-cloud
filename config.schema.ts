@@ -38,7 +38,23 @@ export const configValidationSchema = Joi.object({
 
   // Auth
   JWT_SECRET: Joi.string().required(),
-  JWT_EXPIRATION: Joi.number().default(3600),
+  /*
+   * How long a token outlives its owner's *last request*, not their login.
+   * `SlidingSessionInterceptor` re-issues the cookie as they use the app, so
+   * this is an inactivity timeout: a pit-wall tab in use all day is never
+   * logged out mid-session, and a tab abandoned on a shared laptop stops
+   * being a valid credential 24 h later rather than 24 h after sign-in.
+   */
+  JWT_EXPIRATION: Joi.number().default(86400),
+  /*
+   * How much of a token's life must have elapsed before activity re-issues
+   * it. Every authenticated request would otherwise mint and Set-Cookie a
+   * fresh JWT, which at 10 Hz-adjacent traffic is a lot of signing for no
+   * benefit; 15 min bounds it to ~4 signatures an hour per active session
+   * while keeping the sliding window's granularity far finer than the day it
+   * is sliding.
+   */
+  JWT_REFRESH_AFTER: Joi.number().default(900),
 
   // Redis — live pub/sub fan-out + last-known-value cache.
   REDIS_HOST: Joi.string().default('localhost'),

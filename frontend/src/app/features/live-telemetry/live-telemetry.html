@@ -42,6 +42,9 @@
     <section class="panel">
       <header class="panel-head">
         <h1>{{ selected()!.name }}</h1>
+        @if (trackMap.trackName(); as track) {
+          <span class="muted track">{{ track }}</span>
+        }
         @if (live.sessionActive()) {
           <span class="pill connected">On track</span>
         } @else {
@@ -77,6 +80,26 @@
           <span class="attribution">{{ attribution }}</span>
         }
       </footer>
+
+      <div class="charts">
+        <app-line-chart
+          title="Speed"
+          unit=" km/h"
+          [series]="speedSeries()"
+          [resetKey]="carId()"
+        />
+        <app-line-chart
+          title="RPM"
+          [series]="rpmSeries()"
+          [resetKey]="carId()"
+        />
+        <app-line-chart
+          title="Temperatures"
+          unit=" °C"
+          [series]="tempSeries()"
+          [resetKey]="carId()"
+        />
+      </div>
     </section>
   }
 </main>

@@ -16,8 +16,8 @@ import { Signal, computed } from '@angular/core';
  *   has not seeded — `TracksService.resolve` is explicit that this is "a
  *   first-class answer, not a failure", because a car reports whatever its
  *   independently-versioned on-car database calls the track.
- * - Any authenticated read **401s** once the 1 h JWT expires, which a pit-wall
- *   browser left open through a session comfortably outlives.
+ * - Any authenticated read **401s** once the 24 h JWT expires, which a
+ *   pit-wall browser left open across a multi-day event can still outlive.
  * - Session-scoped reads **403** for another team's session and **404** for a
  *   deleted one.
  *

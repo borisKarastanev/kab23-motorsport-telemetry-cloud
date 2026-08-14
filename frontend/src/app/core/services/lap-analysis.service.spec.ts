@@ -14,9 +14,9 @@ import { LapAnalysisService } from './lap-analysis.service';
  * (analysis.error())` branch that renders failures, so an unguarded read threw
  * during change detection and took down the whole analysis view instead of
  * showing the error state that already existed for the case. All three status
- * codes below are states this feature produces normally: 401 once the 1 h JWT
- * expires on a long-open tab, 403 for another team's session, 404 for one that
- * has been deleted.
+ * codes below are states this feature produces normally: 401 once the 24 h
+ * JWT expires on a long-open tab, 403 for another team's session, 404 for one
+ * that has been deleted.
  */
 describe('LapAnalysisService', () => {
   let http: HttpTestingController;

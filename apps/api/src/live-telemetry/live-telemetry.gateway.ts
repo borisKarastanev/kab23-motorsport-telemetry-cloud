@@ -239,11 +239,12 @@ export class LiveTelemetryGateway
   /**
    * Drops the socket when its token expires.
    *
-   * `JWT_EXPIRATION` defaults to an hour, but a socket outlives that trivially
-   * — a browser left open on the pit wall would otherwise still be streaming at
-   * midnight on a token that expired at lunchtime. Re-authorizing every frame
-   * is the wrong end of the trade; disconnecting at expiry lets the client
-   * reconnect through the normal cookie flow.
+   * `JWT_EXPIRATION` defaults to 24h, but a socket left open across a
+   * multi-day event outlives even that — a browser left open on the pit wall
+   * would otherwise still be streaming on a token that expired the day
+   * before. Re-authorizing every frame is the wrong end of the trade;
+   * disconnecting at expiry lets the client reconnect through the normal
+   * cookie flow.
    */
   private scheduleExpiry(client: Socket, exp?: number): void {
     if (!exp) {

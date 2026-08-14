@@ -112,6 +112,38 @@ export function pan(t: ViewTransform, dxScreen: number, dyScreen: number): ViewT
   return { scale: t.scale, x: t.x + dxScreen, y: t.y + dyScreen };
 }
 
+/** A wheel notch in line mode, in CSS pixels — roughly one line of text. */
+const WHEEL_LINE_PX = 16;
+/** …and in page mode, where one notch is about a screenful. */
+const WHEEL_PAGE_PX = 400;
+/**
+ * The most one event may contribute. A page-mode notch would otherwise jump
+ * straight to the zoom limit, and a coarse mouse driver can report a single
+ * enormous delta.
+ */
+const WHEEL_MAX_PX = 240;
+
+/**
+ * The zoom factor for one wheel event, normalised across browsers.
+ *
+ * **`deltaY` is only comparable within the same `deltaMode`,** and both zoom
+ * surfaces used to multiply the raw number by a fixed constant. Chrome reports
+ * pixels (~100 per notch, so ~10% zoom); Firefox — including on this project's
+ * Linux dev machines — reports *lines*, ~3 per notch, which the same constant
+ * turned into a **0.3% zoom**: roughly 700 notches to cross the zoom range,
+ * i.e. a wheel that looks broken. jsdom defaults `deltaMode` to 0, so no test
+ * could see it.
+ *
+ * Shared by the canvas views and `line-chart.ts` so the gesture feels the same
+ * everywhere and this only has to be right once.
+ */
+export function wheelZoomFactor(event: WheelEvent, sensitivity = 0.001): number {
+  const perUnit = event.deltaMode === 1 ? WHEEL_LINE_PX : event.deltaMode === 2 ? WHEEL_PAGE_PX : 1;
+  const deltaPx = Math.max(-WHEEL_MAX_PX, Math.min(WHEEL_MAX_PX, event.deltaY * perUnit));
+
+  return Math.exp(-deltaPx * sensitivity);
+}
+
 /**
  * Whether two transforms differ enough to be worth committing.
  *

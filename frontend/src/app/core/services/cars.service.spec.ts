@@ -86,7 +86,7 @@ describe('CarsService', () => {
     // `defaultValue: []` does not cover it — only idle and loading. Both the
     // live view and the sessions view bind this list, so an unguarded read
     // threw during change detection and took the view down. `/cars` 401s as
-    // soon as the 1 h JWT expires on a long-open pit-wall tab.
+    // soon as the 24 h JWT expires on a long-open pit-wall tab.
     current.set(userA);
     TestBed.tick();
     http

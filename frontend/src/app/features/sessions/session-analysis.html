@@ -1,6 +1,9 @@
 <header class="topbar">
   <a class="brand" routerLink="/">Motorsport Telemetry</a>
   <a class="back" routerLink="/sessions">← Sessions</a>
+  @if (trackMap.trackName(); as track) {
+    <span class="muted track">{{ track }}</span>
+  }
   <span class="spacer"></span>
 
   @if (analysis.analyzedAt(); as at) {
@@ -85,14 +88,18 @@
 
     @if (deltaSeries().length) {
       <section class="panel">
-        <!-- includeZero off: zero is guaranteed in range here, and forcing the
-             axis wider would flatten exactly the small differences this chart
+        <!-- The one signed channel: a delta goes either side of zero, and
+             zero is guaranteed in range anyway, so forcing the axis to
+             contain it would only flatten the small differences this chart
              exists to show. -->
         <app-line-chart
           title="Time delta"
           unit=" s"
+          xUnit=" m"
+          [showXAxis]="true"
           [series]="deltaSeries()"
-          [includeZero]="false"
+          [signed]="true"
+          [resetKey]="id()"
         />
         <p class="muted note">
           Above the line, lap {{ analysis.referenceLap() }} is behind lap
@@ -102,9 +109,29 @@
     }
 
     <section class="panel charts">
-      <app-line-chart title="Speed" unit=" km/h" [series]="speedSeries()" />
-      <app-line-chart title="RPM" [series]="rpmSeries()" />
-      <app-line-chart title="Temperatures" unit=" °C" [series]="tempSeries()" />
+      <app-line-chart
+        title="Speed"
+        unit=" km/h"
+        xUnit=" m"
+        [showXAxis]="true"
+        [series]="speedSeries()"
+        [resetKey]="id()"
+      />
+      <app-line-chart
+        title="RPM"
+        xUnit=" m"
+        [showXAxis]="true"
+        [series]="rpmSeries()"
+        [resetKey]="id()"
+      />
+      <app-line-chart
+        title="Temperatures"
+        unit=" °C"
+        xUnit=" m"
+        [showXAxis]="true"
+        [series]="tempSeries()"
+        [resetKey]="id()"
+      />
     </section>
   }
 </main>

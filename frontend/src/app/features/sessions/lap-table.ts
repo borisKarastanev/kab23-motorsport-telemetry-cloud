@@ -36,14 +36,16 @@ import { lapTime, signedSeconds } from './format';
       <tbody>
         @for (row of rows(); track row.lap.lapNumber) {
           <tr
+            class="row"
             [class.active]="row.lap.lapNumber === activeLap()"
             [class.reference]="row.lap.lapNumber === referenceLap()"
+            (click)="select.emit(row.lap.lapNumber)"
           >
             <td>
               <button
                 type="button"
                 class="pick"
-                (click)="select.emit(row.lap.lapNumber)"
+                (click)="$event.stopPropagation(); select.emit(row.lap.lapNumber)"
                 [attr.aria-pressed]="row.lap.lapNumber === activeLap()"
               >
                 {{ row.lap.lapNumber }}
@@ -67,7 +69,7 @@ import { lapTime, signedSeconds } from './format';
                 class="vs"
                 [class.on]="row.lap.lapNumber === referenceLap()"
                 [disabled]="row.lap.lapNumber === activeLap()"
-                (click)="compare.emit(row.lap.lapNumber)"
+                (click)="$event.stopPropagation(); compare.emit(row.lap.lapNumber)"
               >
                 vs
               </button>
@@ -115,8 +117,24 @@ import { lapTime, signedSeconds } from './format';
       text-align: end;
       font-variant-numeric: tabular-nums;
     }
-    tr.active {
+    /*
+     * All three row states paint on the cell, not a mix of cell and row. A
+     * cell background renders *over* its row's, so a hover rule on the cell
+     * and an active rule on the row means hovering the selected lap replaces
+     * its highlight with the generic hover colour — the row reads as having
+     * deselected itself under the cursor.
+     */
+    tr.row {
+      cursor: pointer;
+    }
+    tr.row:hover td {
+      background: #1a1f27;
+    }
+    tr.active td {
       background: #1d2530;
+    }
+    tr.active:hover td {
+      background: #232c39;
     }
     tr.reference td {
       border-block-end-color: var(--muted);

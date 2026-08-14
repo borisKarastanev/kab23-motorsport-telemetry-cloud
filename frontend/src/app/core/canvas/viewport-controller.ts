@@ -6,6 +6,7 @@ import {
   observeSize,
   pan,
   transformsDiffer,
+  wheelZoomFactor,
   zoomAt,
 } from './canvas-viewport';
 
@@ -133,7 +134,7 @@ export function createCanvasViewport(options: CanvasViewportOptions) {
         return;
       }
 
-      const factor = Math.exp(-event.deltaY * 0.001);
+      const factor = wheelZoomFactor(event);
       const current = transform();
       const zoomed = zoomAt(
         current,

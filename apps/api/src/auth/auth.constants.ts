@@ -8,3 +8,13 @@
  * silently unauthenticated.
  */
 export const AUTH_COOKIE = 'Authentication';
+
+/**
+ * Where `JwtStrategy` stashes the verified token payload on the request.
+ *
+ * A symbol rather than a string key: this rides on the express `Request`
+ * alongside whatever else the framework and its middleware put there, and a
+ * symbol cannot collide with any of it or be reached by accident from a
+ * request body.
+ */
+export const TOKEN_PAYLOAD = Symbol('tokenPayload');

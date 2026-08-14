@@ -73,6 +73,20 @@ export class TrackMapService {
 
   readonly attribution = computed(() => this.response()?.attribution ?? null);
 
+  /**
+   * The circuit's human name, e.g. "Kaloyanovo".
+   *
+   * Read off the map response rather than resolved in the browser: answering
+   * `GET /tracks/:track/map` at all means the server already matched the
+   * caller's opaque device track string to a row, so it ships the name with
+   * the answer. Doing it here instead would mean fetching the whole `/tracks`
+   * table and re-implementing `TracksService.resolve`'s slug-or-
+   * `deviceTrackIds` rule in a project that cannot import it — two copies of
+   * one rule, with nothing to catch them drifting apart. `null` until the
+   * response lands, same as an unknown track's map.
+   */
+  readonly trackName = computed(() => this.response()?.trackName ?? null);
+
   // ---------------------------------------------------------------------------
   // Resolving a session to its track
   // ---------------------------------------------------------------------------

@@ -3,14 +3,10 @@ import { RouterLink } from '@angular/router';
 import { LapAnalysisService } from '../../core/services/lap-analysis.service';
 import { TrackMapService } from '../../core/services/track-map.service';
 import { AnalysisSkipReason } from '../../core/models/analysis.model';
-import { ChartSeries, LineChart } from './line-chart';
+import { CHANNEL_COLOUR, ChartSeries, LineChart } from '../../core/charts/line-chart';
 import { LapTable } from './lap-table';
 import { RacingLine } from './racing-line';
 import { lapTime, signedSeconds } from './format';
-
-/** Active lap and reference lap, everywhere they are drawn together. */
-const ACTIVE_COLOUR = '#4aa3df';
-const REFERENCE_COLOUR = '#8b93a1';
 
 /**
  * What each empty state means, in a driver's terms.
@@ -133,12 +129,12 @@ export class SessionAnalysis {
     return [
       {
         label: 'Coolant',
-        colour: '#e8543f',
+        colour: CHANNEL_COLOUR.coolant,
         points: points.map((p) => ({ x: p.distM, y: p.coolantC })),
       },
       {
         label: 'Oil',
-        colour: '#e8c14a',
+        colour: CHANNEL_COLOUR.oil,
         points: points.map((p) => ({ x: p.distM, y: p.oilC })),
       },
     ];
@@ -175,7 +171,7 @@ export class SessionAnalysis {
     const series: ChartSeries[] = [
       {
         label: this.activeLabel(),
-        colour: ACTIVE_COLOUR,
+        colour: CHANNEL_COLOUR.active,
         points: this.activePoints().map((p) => ({ x: p.distM, y: pick(p) })),
       },
     ];
@@ -184,7 +180,7 @@ export class SessionAnalysis {
     if (reference.length) {
       series.push({
         label: this.referenceLabel(),
-        colour: REFERENCE_COLOUR,
+        colour: CHANNEL_COLOUR.reference,
         muted: true,
         points: reference.map((p) => ({ x: p.distM, y: pick(p) })),
       });
