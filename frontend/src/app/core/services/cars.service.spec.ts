@@ -1,9 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import {
-  HttpTestingController,
-  provideHttpClientTesting,
-} from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { signal } from '@angular/core';
 
 import { CarsService } from './cars.service';
@@ -81,6 +78,24 @@ describe('CarsService', () => {
     TestBed.tick();
 
     // The whole point: nothing of user A survives in the tab.
+    expect(cars.value()).toEqual([]);
+  });
+
+  it('degrades to an empty list on a failed request, without throwing', async () => {
+    // `httpResource.value()` throws ResourceValueError in the error state, and
+    // `defaultValue: []` does not cover it — only idle and loading. Both the
+    // live view and the sessions view bind this list, so an unguarded read
+    // threw during change detection and took the view down. `/cars` 401s as
+    // soon as the 1 h JWT expires on a long-open pit-wall tab.
+    current.set(userA);
+    TestBed.tick();
+    http
+      .expectOne((r) => r.url.endsWith('/cars'))
+      .flush('nope', { status: 401, statusText: 'Unauthorized' });
+    TestBed.tick();
+    await Promise.resolve();
+
+    expect(() => cars.value()).not.toThrow();
     expect(cars.value()).toEqual([]);
   });
 

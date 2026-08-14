@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { httpResource } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { Car } from '../models/live-telemetry.model';
+import { guarded } from '../resource';
 import { AuthService } from './auth.service';
 
 /**
@@ -50,6 +51,7 @@ export class CarsService {
     { defaultValue: [] },
   );
 
-  readonly value = this.cars.value;
+  /** Empty rather than thrown when `/cars` fails; see `guarded`. */
+  readonly value = guarded(this.cars, [] as Car[]);
   readonly loading = this.cars.isLoading;
 }

@@ -1,14 +1,8 @@
-import {
-  Component,
-  OnDestroy,
-  computed,
-  effect,
-  inject,
-  input,
-} from '@angular/core';
+import { Component, OnDestroy, computed, effect, inject, input } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { CarsService } from '../../core/services/cars.service';
 import { LiveTelemetryService } from '../../core/services/live-telemetry.service';
+import { TrackMapService } from '../../core/services/track-map.service';
 import { Gauges } from './gauges';
 import { TrackTrace } from './track-trace';
 
@@ -32,6 +26,7 @@ export class LiveTelemetry implements OnDestroy {
   private readonly router = inject(Router);
   private readonly cars = inject(CarsService);
   protected readonly live = inject(LiveTelemetryService);
+  protected readonly trackMap = inject(TrackMapService);
 
   protected readonly carList = this.cars.value;
   protected readonly carsLoading = this.cars.loading;
@@ -58,12 +53,17 @@ export class LiveTelemetry implements OnDestroy {
         this.live.disconnect();
       }
     });
+
+    // The live session id arrives over the socket, so the track follows it;
+    // `TrackMapService` resolves the session to its track itself.
+    effect(() => this.trackMap.openForSession(this.live.sessionId()));
   }
 
   ngOnDestroy(): void {
     // Leaving the view must close the socket, or the gateway keeps this car
     // subscribed for a viewer who is no longer looking.
     this.live.disconnect();
+    this.trackMap.openForSession(null);
   }
 
   protected async select(carId: string): Promise<void> {

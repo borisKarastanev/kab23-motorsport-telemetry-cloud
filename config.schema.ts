@@ -69,4 +69,24 @@ export const configValidationSchema = Joi.object({
   // app that does need them, so the check is not lost, just narrowed.
   MQTT_ADMIN_USERNAME: Joi.string().allow('').optional(),
   MQTT_ADMIN_PASSWORD: Joi.string().allow('').optional(),
+
+  // Track map overlay (apps/api only — TrackMapService). Fetches a circuit's
+  // outline from the Overpass API once per track, ever; nothing here is a
+  // secret, since Overpass needs no key.
+  OVERPASS_URL: Joi.string().default('https://overpass-api.de/api/interpreter'),
+  // OSMF's usage policy requires an identifying UA on every request.
+  OVERPASS_USER_AGENT: Joi.string().default(
+    'motorsport-telemetry-cloud (contact via repository)',
+  ),
+  OVERPASS_TIMEOUT_MS: Joi.number().default(20000),
+  OVERPASS_SEARCH_RADIUS_M: Joi.number().default(2000),
+  // How long GET /tracks/:track/map awaits a cold fetch before answering
+  // 'pending' and letting it finish in the background.
+  TRACK_MAP_FETCH_DEADLINE_MS: Joi.number().default(8000),
+  // How long an 'unavailable' track map is left alone before the next request
+  // is allowed to retry Overpass, so a permanently-unmapped track does not
+  // fire a query on every page load.
+  TRACK_MAP_RETRY_AFTER_HOURS: Joi.number().default(24),
+  // Lets a deployment switch off all outbound Overpass egress.
+  TRACK_MAP_FETCH_ENABLED: Joi.boolean().default(true),
 });

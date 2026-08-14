@@ -2,12 +2,8 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient, httpResource } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import {
-  Lap,
-  LapCompare,
-  LapTrace,
-  LapsResponse,
-} from '../models/analysis.model';
+import { Lap, LapCompare, LapTrace, LapsResponse } from '../models/analysis.model';
+import { guarded } from '../resource';
 
 /**
  * Enough points to draw a corner faithfully, few enough that switching laps is
@@ -49,15 +45,21 @@ export class LapAnalysisService {
     const id = this.sessionId();
     // `undefined` leaves the resource idle. Without this the view would fire a
     // request at `/sessions/null/laps` on its first change detection.
-    return id
-      ? { url: `${this.base}/sessions/${id}/laps`, withCredentials: true }
-      : undefined;
+    return id ? { url: `${this.base}/sessions/${id}/laps`, withCredentials: true } : undefined;
   });
 
-  readonly laps = computed<Lap[]>(() => this.lapsResource.value()?.laps ?? []);
-  readonly analyzedAt = computed(
-    () => this.lapsResource.value()?.analyzedAt ?? null,
-  );
+  /**
+   * The gate every laps read below goes through. Worth knowing why it is not
+   * optional here: the analysis topbar binds `analyzedAt()` *above* the
+   * template's `@else if (analysis.error())` branch, so an unguarded read threw
+   * during change detection and took the view down instead of rendering the
+   * error state that already exists for exactly this case. See
+   * `core/resource.ts`.
+   */
+  private readonly lapsResponse = guarded(this.lapsResource);
+
+  readonly laps = computed<Lap[]>(() => this.lapsResponse()?.laps ?? []);
+  readonly analyzedAt = computed(() => this.lapsResponse()?.analyzedAt ?? null);
   /**
    * Why the last derivation produced nothing.
    *
@@ -65,13 +67,11 @@ export class LapAnalysisService {
    * run keeps the laps it already had and returns both. So read it as "why
    * there is nothing *new*", and gate empty states on `laps().length`.
    */
-  readonly reason = computed(() => this.lapsResource.value()?.reason ?? null);
+  readonly reason = computed(() => this.lapsResponse()?.reason ?? null);
   readonly loading = this.lapsResource.isLoading;
   readonly error = this.lapsResource.error;
 
-  readonly bestLap = computed(
-    () => this.laps().find((lap) => lap.isBest)?.lapNumber ?? null,
-  );
+  readonly bestLap = computed(() => this.laps().find((lap) => lap.isBest)?.lapNumber ?? null);
 
   /**
    * The lap being looked at.
@@ -134,15 +134,14 @@ export class LapAnalysisService {
       : undefined;
   });
 
-  readonly activeTrace = computed(() => this.activeTraceResource.value() ?? null);
-  readonly referenceTrace = computed(
-    () => this.referenceTraceResource.value() ?? null,
-  );
-  readonly compare = computed(() => this.compareResource.value() ?? null);
+  // A trace 404s for a lap the derivation dropped on a recompute, and all
+  // three inherit the laps request's 401. A missing trace must render as no
+  // line, never as a thrown view.
+  readonly activeTrace = guarded(this.activeTraceResource);
+  readonly referenceTrace = guarded(this.referenceTraceResource);
+  readonly compare = guarded(this.compareResource);
   readonly traceLoading = computed(
-    () =>
-      this.activeTraceResource.isLoading() ||
-      this.referenceTraceResource.isLoading(),
+    () => this.activeTraceResource.isLoading() || this.referenceTraceResource.isLoading(),
   );
 
   private traceRequest(lapNumber: number | null) {
@@ -188,9 +187,7 @@ export class LapAnalysisService {
 
   /** Toggle: picking the lap already being compared clears the comparison. */
   toggleCompare(lapNumber: number): void {
-    this.compareWith.update((current) =>
-      current === lapNumber ? null : lapNumber,
-    );
+    this.compareWith.update((current) => (current === lapNumber ? null : lapNumber));
   }
 
   /**
