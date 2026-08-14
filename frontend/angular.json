@@ -101,7 +101,20 @@
           "builder": "@angular/build:unit-test",
           "options": {
             "tsConfig": "tsconfig.spec.json",
-            "buildTarget": "::development"
+            "buildTarget": "::development",
+            "coverageExclude": [
+              "**/*.html",
+              "**/*.scss",
+              "**/*.module.ts",
+              "**/*.config.ts",
+              "**/*.routes.ts"
+            ],
+            "coverageThresholds": {
+              "statements": 95,
+              "branches": 88,
+              "functions": 95,
+              "lines": 95
+            }
           }
         }
       }
