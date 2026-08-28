@@ -37,6 +37,34 @@ export interface BrakingPoint {
   peakDecelG: number;
 }
 
+/** A real lap number, or the literal `'optimal'` — the best-sector stitch. */
+export type LapRef = number | 'optimal';
+
+/** How a session's laps split their sectors. See `sector-gates.ts` (backend). */
+export type SectorScheme = 'gates' | 'distance';
+
+export interface OptimalSector {
+  sector: number;
+  lapNumber: number;
+  sectorMs: number;
+}
+
+/** The physical gap, in metres, between two contributing laps at one join. */
+export interface Seam {
+  distM: number;
+  gapM: number;
+}
+
+export interface OptimalLap {
+  lapMs: number;
+  distanceM: number;
+  sectors: OptimalSector[];
+  brakingPoints: BrakingPoint[];
+  /** Set when every sector came from one lap — the optimal *is* that lap. */
+  matchesLapNumber: number | null;
+  seams: Seam[];
+}
+
 export interface Lap {
   id: string;
   sessionId: string;
@@ -69,6 +97,10 @@ export type AnalysisSkipReason =
 export interface LapsResponse {
   laps: Lap[];
   analyzedAt: string | null;
+  /** The best-sector stitch across `laps`, or `null` under two eligible laps. */
+  optimal: OptimalLap | null;
+  /** Absent (or `'distance'`) on a session derived before gates existed. */
+  sectorScheme?: SectorScheme;
   reason?: AnalysisSkipReason;
 }
 
@@ -86,10 +118,12 @@ export interface LapTracePoint {
 }
 
 export interface LapTrace {
-  lapNumber: number;
+  lapNumber: LapRef;
   lapMs: number;
   distanceM: number;
   points: LapTracePoint[];
+  /** Present only when `lapNumber` is `'optimal'`. */
+  seams?: Seam[];
 }
 
 export interface LapDeltaPoint {
@@ -103,8 +137,8 @@ export interface LapDeltaPoint {
 }
 
 export interface LapCompare {
-  lapA: number;
-  lapB: number;
+  lapA: LapRef;
+  lapB: LapRef;
   distanceM: number;
   points: LapDeltaPoint[];
 }

@@ -1,5 +1,5 @@
-import { LapPoint } from './analysis.types';
-import { sectorTimes } from './sectors';
+import { Gate, LapPoint } from './analysis.types';
+import { crossGates, sectorTimes, sectorTimesFromGates } from './sectors';
 
 /**
  * A lap driven at a constant `speedKmh` in a straight line, sampled at 10 Hz.
@@ -93,5 +93,95 @@ describe('sectorTimes', () => {
     }));
 
     expect(sectorTimes(parked, 3)).toEqual([]);
+  });
+});
+
+/** A gate perpendicular to `evenLap`'s path (due north) at `distM`. */
+function gateAt(distM: number): Gate {
+  const lat = 42.34 + distM / 111132;
+  return { lat1: lat, lon1: 24.72, lat2: lat, lon2: 24.74 };
+}
+
+// `evenLap(1800, 108)` steps by exactly 3 m (30 m/s at 100 ms). Gates offset
+// by half a step so a boundary never lands exactly on a sampled vertex, where
+// the incoming and outgoing segments can both register a crossing at the
+// shared point — a real edge case for an exact split, not one real GPS floats
+// hit.
+describe('sectorTimesFromGates', () => {
+  it('splits at the gates, summing to the lap time', () => {
+    const lap = evenLap(1800, 108); // 60 s lap
+    const lapMs = lap[lap.length - 1].timeMs - lap[0].timeMs;
+
+    const sectors = sectorTimesFromGates(lap, [gateAt(601.5), gateAt(1201.5)]);
+
+    expect(sectors).toHaveLength(3);
+    for (const sector of sectors) {
+      expect(Math.abs(sector - 20_000)).toBeLessThanOrEqual(50);
+    }
+    expect(
+      Math.abs(sectors.reduce((a, b) => a + b, 0) - lapMs),
+    ).toBeLessThanOrEqual(2);
+  });
+
+  it('honours a gate count other than two', () => {
+    const lap = evenLap(1800, 108);
+    expect(sectorTimesFromGates(lap, [gateAt(901.5)])).toHaveLength(2);
+  });
+
+  it('returns [] when a gate is never crossed', () => {
+    const lap = evenLap(1800, 108);
+    const nowhereNear: Gate = { lat1: 10, lon1: 10, lat2: 10, lon2: 10.01 };
+
+    expect(sectorTimesFromGates(lap, [gateAt(601.5), nowhereNear])).toEqual([]);
+  });
+
+  it('returns [] when gates are crossed out of order', () => {
+    const lap = evenLap(1800, 108);
+    // Second gate physically before the first: their crossing instants come
+    // back in the wrong order, which is not a set of splits anyone can read
+    // as S1/S2/S3.
+    expect(sectorTimesFromGates(lap, [gateAt(1201.5), gateAt(601.5)])).toEqual(
+      [],
+    );
+  });
+
+  it('returns [] when a gate is crossed more than once', () => {
+    // A car wiggling back and forth across the line — GPS jitter, or a
+    // genuine off that rejoined behind it.
+    const wiggle: LapPoint[] = [
+      { timeMs: 0, lat: 42.34 + 590 / 111132, lon: 24.73, distM: 590 },
+      { timeMs: 400, lat: 42.34 + 610 / 111132, lon: 24.73, distM: 610 },
+      { timeMs: 800, lat: 42.34 + 590 / 111132, lon: 24.73, distM: 620 },
+      { timeMs: 1200, lat: 42.34 + 610 / 111132, lon: 24.73, distM: 630 },
+    ];
+
+    expect(sectorTimesFromGates(wiggle, [gateAt(600)])).toEqual([]);
+  });
+
+  it("returns [] when the only gate sits exactly on the lap's closing point", () => {
+    // A degenerate placement — the "boundary" is not a boundary at all if
+    // nothing of the lap remains after it.
+    const lap = evenLap(1800, 108);
+    expect(sectorTimesFromGates(lap, [gateAt(1800)])).toEqual([]);
+  });
+
+  it('returns [] for a lap with fewer than two points', () => {
+    expect(
+      sectorTimesFromGates([evenLap(1800, 108)[0]], [gateAt(600)]),
+    ).toEqual([]);
+  });
+});
+
+describe('crossGates', () => {
+  it('returns null for an empty gate list', () => {
+    expect(crossGates(evenLap(1800, 108), [])).toBeNull();
+  });
+
+  it('carries the crossing distance alongside the time', () => {
+    const lap = evenLap(1800, 108);
+    const crossings = crossGates(lap, [gateAt(601.5)]);
+
+    expect(crossings).not.toBeNull();
+    expect(crossings![0].distM).toBeCloseTo(601.5, 0);
   });
 });

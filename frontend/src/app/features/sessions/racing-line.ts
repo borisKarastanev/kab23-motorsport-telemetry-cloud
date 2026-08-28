@@ -9,6 +9,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { BrakingPoint, LapTracePoint } from '../../core/models/analysis.model';
+import { CHANNEL_COLOUR } from '../../core/charts/line-chart';
 import { TrackMapGeoJson, isCircuit, isCorner } from '../../core/models/track-map.model';
 import {
   Bounds,
@@ -174,6 +175,13 @@ export class RacingLine {
   readonly ghostPoints = input<LapTracePoint[]>([]);
   readonly brakingPoints = input<BrakingPoint[]>([]);
   readonly trackMap = input<TrackMapGeoJson | null>(null);
+  /**
+   * How the ghost lap (`ghostPoints`) reads. `'reference'` is today's grey
+   * dashed line at half alpha; `'optimal'` is solid, full alpha, the same
+   * weight as the primary line — red is reserved for the optimal lap alone, so
+   * the two read as peers rather than line-and-ghost.
+   */
+  readonly ghostAppearance = input<'reference' | 'optimal'>('reference');
   /** Changing this resets zoom/pan to fit — bind the session id, not the lap number. */
   readonly resetKey = input<unknown>(undefined);
 
@@ -339,7 +347,7 @@ export class RacingLine {
         ctx.setTransform(dpr * t.scale, 0, 0, dpr * t.scale, dpr * t.x, dpr * t.y);
         // `write` receives the previous phase's result as a Signal, not a plain
         // value — call it to read the colours earlyRead resolved.
-        drawScene(ctx, w, t, colours());
+        drawScene(ctx, w, t, colours(), this.ghostAppearance());
       },
     });
   }
@@ -482,6 +490,7 @@ function drawScene(
   w: WorldGeometry,
   t: ViewTransform,
   colours: { muted: string; bg: string },
+  ghostAppearance: 'reference' | 'optimal',
 ): void {
   if (w.circuit) {
     ctx.beginPath();
@@ -501,10 +510,19 @@ function drawScene(
   if (w.ghost) {
     ctx.beginPath();
     strokePolyline(ctx, w.ghost);
-    ctx.strokeStyle = colours.muted;
-    ctx.globalAlpha = 0.5;
-    ctx.lineWidth = GHOST_WIDTH_PX / t.scale;
-    ctx.setLineDash([6 / t.scale, 5 / t.scale]);
+    if (ghostAppearance === 'optimal') {
+      // Solid, full alpha, the primary line's own weight — nobody drove this
+      // lap, but it is not a ghost of one either.
+      ctx.strokeStyle = CHANNEL_COLOUR.optimal;
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = LINE_WIDTH_PX / t.scale;
+      ctx.setLineDash([]);
+    } else {
+      ctx.strokeStyle = colours.muted;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = GHOST_WIDTH_PX / t.scale;
+      ctx.setLineDash([6 / t.scale, 5 / t.scale]);
+    }
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();

@@ -8,7 +8,11 @@ import {
 } from './gate-crossing';
 import { stepM } from './lap-distance';
 import { isPositioned, lerpChannel } from './sample-math';
-import { DEFAULT_SECTOR_COUNT, sectorTimes } from './sectors';
+import {
+  DEFAULT_SECTOR_COUNT,
+  sectorTimes,
+  sectorTimesFromGates,
+} from './sectors';
 
 /**
  * Turns a session's samples into laps.
@@ -41,9 +45,22 @@ export class LapSegmenter {
   /** The gate in local metres. Constant for the run, so projected once here. */
   private readonly gate: ProjectedGate;
 
-  constructor(gate: Gate, options: { sectorCount?: number } = {}) {
+  /**
+   * Fixed interior sector splits, when one has been resolved for this track —
+   * see `sector-gates.ts`. `sectorTimesFromGates` reads a lap's own `points`,
+   * already in memory when a lap closes, so running it here costs no second
+   * walk over the session's raw samples. Undefined falls back to
+   * `sectorTimes`'s distance fractions.
+   */
+  private readonly sectorGates?: Gate[];
+
+  constructor(
+    gate: Gate,
+    options: { sectorCount?: number; sectorGates?: Gate[] } = {},
+  ) {
     this.gate = projectGate(gate);
     this.sectorCount = options.sectorCount ?? DEFAULT_SECTOR_COUNT;
+    this.sectorGates = options.sectorGates;
   }
 
   /** Feed samples in ascending time order. */
@@ -179,8 +196,11 @@ export class LapSegmenter {
       distanceM: Math.round(last.distM),
       maxSpeedKmh,
       minSpeedKmh,
-      sectorMs: sectorTimes(points, this.sectorCount),
+      sectorMs: this.sectorGates
+        ? sectorTimesFromGates(points, this.sectorGates)
+        : sectorTimes(points, this.sectorCount),
       brakingPoints: detectBrakingPoints(points),
+      points,
     });
 
     this.points = null;
@@ -191,7 +211,7 @@ export class LapSegmenter {
 export function segmentLaps(
   samples: Iterable<AnalysisSample>,
   gate: Gate,
-  options: { sectorCount?: number } = {},
+  options: { sectorCount?: number; sectorGates?: Gate[] } = {},
 ): DerivedLap[] {
   return new LapSegmenter(gate, options).pushAll(samples).result();
 }

@@ -2,6 +2,11 @@ import { AbstractEntity, SessionStatus } from '@app/common';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Car } from '../../cars/entities/car.entity';
+// A leaf import: `analysis.types.ts` is pure shapes and imports nothing at
+// all, so this does not pull the analysis module into the entity layer. The
+// alternative was respelling the union here, where nothing would catch the two
+// copies drifting apart if a third scheme is ever added.
+import { SectorScheme } from '../../analysis/analysis.types';
 
 /**
  * One on-track run: a car, a driver, and a time window.
@@ -81,4 +86,17 @@ export class Session extends AbstractEntity<Session> {
    */
   @Column({ type: 'timestamptz', nullable: true })
   analyzedAt?: Date;
+
+  /**
+   * How the laps derived at `analyzedAt` split their sectors.
+   *
+   * `'gates'` once a fixed sector gate set (surveyed or derived) was used;
+   * null on every row derived before this column existed and on any session
+   * whose track still has no gate of any kind — both read as the legacy
+   * distance-fraction fallback. Set alongside `analyzedAt` and never on its
+   * own, so the two can never disagree about which derivation produced the
+   * laps currently stored.
+   */
+  @Column({ type: 'text', nullable: true })
+  sectorScheme?: SectorScheme;
 }

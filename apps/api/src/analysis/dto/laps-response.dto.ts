@@ -1,4 +1,6 @@
+import { SectorScheme } from '../analysis.types';
 import { Lap } from '../entities/lap.entity';
+import { OptimalLapDto } from './optimal-lap.dto';
 
 /**
  * Why a session has no laps.
@@ -26,6 +28,19 @@ export interface LapsResponseDto {
   laps: Lap[];
   /** When the derivation last ran; null if it has not. */
   analyzedAt: Date | null;
+  /**
+   * The best-sector-stitch across `laps`, or `null` under two eligible laps —
+   * see `optimal-lap-core.ts`. Computed from the rows already in `laps`, so
+   * the dropdown gets its label and time in the same round trip that fetches
+   * the lap table.
+   */
+  optimal: OptimalLapDto | null;
+  /**
+   * How `laps` split their sectors. `'distance'` (or, on a row derived before
+   * this column existed, `undefined`) means the legacy equal-thirds fallback
+   * — see `sectors.ts` and `sector-gates.ts`.
+   */
+  sectorScheme?: SectorScheme;
   /**
    * Why this derivation produced nothing.
    *

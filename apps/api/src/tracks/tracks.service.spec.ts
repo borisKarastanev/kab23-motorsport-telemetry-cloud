@@ -4,31 +4,69 @@ import { TracksRepository } from './tracks.repository';
 import { TracksSeedService } from './tracks-seed.service';
 import { TRACK_SEEDS } from './tracks.seed';
 import { Track } from './entities/track.entity';
+import { TrackMap } from './track-map/entities/track-map.entity';
+import { TrackMapService } from './track-map/track-map.service';
+import { PENDING } from './track-map/track-map.types';
 
 describe('TracksService', () => {
   let service: TracksService;
   let repository: jest.Mocked<
     Pick<
       TracksRepository,
-      'findAllOrdered' | 'findByDeviceTrack' | 'upsertSeeds'
+      | 'findAllOrdered'
+      | 'findByDeviceTrack'
+      | 'upsertSeeds'
+      | 'setDerivedSectorGates'
     >
   >;
+  let trackMapService: jest.Mocked<Pick<TrackMapService, 'get'>>;
 
   beforeEach(async () => {
     repository = {
       findAllOrdered: jest.fn(),
       findByDeviceTrack: jest.fn().mockResolvedValue(null),
       upsertSeeds: jest.fn().mockResolvedValue(undefined),
+      setDerivedSectorGates: jest.fn().mockResolvedValue(undefined),
     };
+    trackMapService = { get: jest.fn().mockResolvedValue(PENDING) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         TracksService,
         { provide: TracksRepository, useValue: repository },
+        { provide: TrackMapService, useValue: trackMapService },
       ],
     }).compile();
 
     service = moduleRef.get(TracksService);
+  });
+
+  describe('getTrackMap', () => {
+    it('delegates to TrackMapService', async () => {
+      const track = { id: 'track-1' } as Track;
+      const trackMap = { id: 'map-1' } as TrackMap;
+      trackMapService.get.mockResolvedValue(trackMap);
+
+      await expect(service.getTrackMap(track)).resolves.toBe(trackMap);
+      expect(trackMapService.get).toHaveBeenCalledWith(track);
+    });
+  });
+
+  describe('setDerivedSectorGates', () => {
+    it('delegates to the repository', async () => {
+      const value = {
+        gates: [],
+        source: 'centreline',
+        derivedAt: 'now',
+      } as Track['derivedSectorGates'];
+
+      await service.setDerivedSectorGates('track-1', value);
+
+      expect(repository.setDerivedSectorGates).toHaveBeenCalledWith(
+        'track-1',
+        value,
+      );
+    });
   });
 
   describe('findAll', () => {

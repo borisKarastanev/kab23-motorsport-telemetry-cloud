@@ -1,3 +1,5 @@
+import { LapRef, SeamDto } from './optimal-lap.dto';
+
 /**
  * One point of a lap's racing line, indexed by distance rather than by time.
  *
@@ -22,10 +24,16 @@ export interface LapTracePointDto {
 }
 
 export interface LapTraceDto {
-  lapNumber: number;
+  lapNumber: LapRef;
   lapMs: number;
   distanceM: number;
   points: LapTracePointDto[];
+  /**
+   * Interior-join gaps, present only when `lapNumber` is `'optimal'` — a
+   * numbered lap's trace is one continuous recording with nothing to seam.
+   * See `SeamDto`.
+   */
+  seams?: SeamDto[];
 }
 
 /** One step of a lap-vs-lap comparison, on the common distance axis. */
@@ -41,8 +49,8 @@ export interface LapDeltaPointDto {
 }
 
 export interface LapCompareDto {
-  lapA: number;
-  lapB: number;
+  lapA: LapRef;
+  lapB: LapRef;
   /**
    * The axis both laps were resampled onto: 0 to the shorter lap's distance.
    * Extrapolating the shorter lap past its own end would invent a delta.

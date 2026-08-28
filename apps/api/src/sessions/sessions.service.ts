@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { SectorScheme } from '../analysis/analysis.types';
 import { CarsService } from '../cars/cars.service';
 import { TeamsService } from '../teams/teams.service';
 import { User } from '../users/entities/user.entity';
@@ -237,12 +238,22 @@ export class SessionsService {
    * There is deliberately no "un-analyze": a recompute swaps the laps and the
    * stamp forward together, so a session never sits in a state where it has
    * been analyzed but says it has not.
+   *
+   * `sectorScheme` moves in the same write, never on its own: a session must
+   * never say `analyzedAt` is set while the scheme that produced those laps
+   * is still whatever it was before, or a client reading the two separately
+   * could catch them disagreeing.
    */
-  async setAnalyzedAt(sessionId: string, analyzedAt: Date): Promise<void> {
+  async setAnalyzedAt(
+    sessionId: string,
+    analyzedAt: Date,
+    sectorScheme: SectorScheme,
+  ): Promise<void> {
     await this.sessionsRepository.findOneAndUpdate(
       { id: sessionId },
       {
         analyzedAt,
+        sectorScheme,
       },
     );
   }

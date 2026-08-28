@@ -27,6 +27,10 @@ export const CHANNEL_COLOUR = {
   reference: '#8b93a1',
   coolant: '#e8543f',
   oil: '#e8c14a',
+  /** The optimal lap — solid, never dashed, reserved for it alone. */
+  optimal: '#ff2d55',
+  /** The delta series on the time-delta chart. */
+  delta: '#6bd18a',
 } as const;
 
 /**

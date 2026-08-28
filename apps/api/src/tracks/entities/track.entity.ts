@@ -88,4 +88,22 @@ export class Track extends AbstractEntity<Track> {
    */
   @Column({ type: 'jsonb', nullable: true })
   sectorGates?: { lat1: number; lon1: number; lat2: number; lon2: number }[];
+
+  /**
+   * Split-point gates this platform derived itself, when nobody surveyed real
+   * ones — from the OSM centreline when `track_maps` has one, or from a
+   * session's own best lap otherwise. Separate from `sectorGates` above so an
+   * auto-derived gate is never mistaken for a surveyed one: `sectorGates` is
+   * authoritative and never overwritten, this column is a cache the next
+   * derivation for this track can just read.
+   *
+   * Null for every track until the first session at it is analyzed —
+   * `sector-gates.ts` populates it and `derivedAt` records when.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  derivedSectorGates?: {
+    gates: { lat1: number; lon1: number; lat2: number; lon2: number }[];
+    source: 'centreline' | 'reference-lap';
+    derivedAt: string;
+  };
 }
