@@ -87,10 +87,58 @@ describe('LapAnalysisService', () => {
     expect(service.analyzedAt()).toBe('2026-08-14T09:00:00Z');
     expect(service.laps()).toHaveLength(1);
     expect(service.bestLap()).toBe(1);
+    // A legacy-shaped fixture with neither field — null-safe, not a throw.
+    expect(service.optimal()).toBeNull();
+    expect(service.sectorScheme()).toBeUndefined();
+  });
+
+  it('exposes the optimal lap and sector scheme when the response carries them', async () => {
+    service.open('session-1');
+    TestBed.tick();
+
+    const optimal = {
+      lapMs: 85000,
+      distanceM: 2100,
+      sectors: [{ sector: 0, lapNumber: 1, sectorMs: 28000 }],
+      brakingPoints: [],
+      matchesLapNumber: null,
+      seams: [],
+    };
+    http
+      .match((r) => r.url.endsWith('/laps'))
+      .forEach((req) =>
+        req.flush({
+          analyzedAt: '2026-08-14T09:00:00Z',
+          laps: [{ lapNumber: 1, lapTimeMs: 92000, isBest: true }],
+          optimal,
+          sectorScheme: 'gates',
+        }),
+      );
+    http.match(() => true).forEach((req) => req.flush({ points: [] }));
+    TestBed.tick();
+    await Promise.resolve();
+
+    expect(service.optimal()).toEqual(optimal);
+    expect(service.sectorScheme()).toBe('gates');
   });
 
   describe('selection and comparison', () => {
-    const openWithLaps = async () => {
+    const OPTIMAL = {
+      lapMs: 85000,
+      distanceM: 2100,
+      sectors: [{ sector: 0, lapNumber: 1, sectorMs: 28000 }],
+      brakingPoints: [],
+      matchesLapNumber: null,
+      seams: [],
+    };
+
+    /**
+     * Three laps and, unless `withOptimal` says otherwise, an optimal lap —
+     * which is what a real three-lap session answers with. Sessions without one
+     * are the interesting case for whether an `'optimal'` ref can be held at
+     * all, so they are opened deliberately rather than by default.
+     */
+    const openWithLaps = async ({ withOptimal = true } = {}) => {
       service.open('session-1');
       TestBed.tick();
 
@@ -104,6 +152,7 @@ describe('LapAnalysisService', () => {
               { lapNumber: 2, lapTimeMs: 93000, isBest: false },
               { lapNumber: 3, lapTimeMs: 91500, isBest: false },
             ],
+            ...(withOptimal ? { optimal: OPTIMAL } : {}),
           }),
         );
       http.match(() => true).forEach((req) => req.flush({ points: [] }));
@@ -193,6 +242,146 @@ describe('LapAnalysisService', () => {
       expect(service.referenceLap()).toBeNull();
     });
 
+    it('selectRef("optimal") requests the optimal trace, not a numbered lap trace', async () => {
+      await openWithLaps();
+
+      service.selectRef('optimal');
+      TestBed.tick();
+
+      const optimalReq = http.expectOne((r) => r.url.endsWith('/optimal/trace'));
+      expect(service.activeLap()).toBe('optimal');
+      optimalReq.flush({ lapNumber: 'optimal', lapMs: 85000, distanceM: 2100, points: [] });
+      http.match(() => true).forEach((req) => req.flush({ points: [] }));
+      TestBed.tick();
+      await Promise.resolve();
+    });
+
+    it('setCompare("optimal") requests ?laps=<active>,optimal from compare', async () => {
+      await openWithLaps();
+
+      service.setCompare('optimal');
+      TestBed.tick();
+
+      // Active lap is 1 (the default best), so the pair is 1,optimal.
+      const compareReq = http.expectOne((r) => r.url.includes('/compare'));
+      expect(compareReq.request.params.get('laps')).toBe('1,optimal');
+      compareReq.flush({ lapA: 1, lapB: 'optimal', distanceM: 2100, points: [] });
+      http.match(() => true).forEach((req) => req.flush({ points: [] }));
+      TestBed.tick();
+      await Promise.resolve();
+
+      expect(service.referenceLap()).toBe('optimal');
+    });
+
+    it('selectRef clears an explicit comparison against the newly active ref', async () => {
+      await openWithLaps();
+
+      service.setCompare('optimal');
+      TestBed.tick();
+      http.match(() => true).forEach((req) => req.flush({ points: [] }));
+      TestBed.tick();
+      await Promise.resolve();
+      expect(service.referenceLap()).toBe('optimal');
+
+      service.selectRef('optimal');
+
+      // Comparing the active ref against itself is not a comparison — falls
+      // back to the best lap.
+      expect(service.referenceLap()).toBe(1);
+    });
+
+    it('selectRef ignores a null ref rather than clearing the selection', async () => {
+      await openWithLaps();
+      service.select(3);
+
+      service.selectRef(null);
+
+      expect(service.activeLap()).toBe(3);
+    });
+
+    it('setCompare(null) clears the comparison outright, with no fallback', async () => {
+      // The dropdown's "—" is a *choice*, not the absence of one. Treated as
+      // absence it was a no-op: the best-lap default put the reference
+      // straight back, so the ghost line, the delta chart and the lap table
+      // carried on comparing against lap 1 — while the select, bound to a
+      // `referenceLap()` that never changed, sat showing "—".
+      await openWithLaps();
+      service.select(3);
+      service.toggleCompare(2);
+      expect(service.referenceLap()).toBe(2);
+
+      service.setCompare(null);
+      TestBed.tick();
+      http.match(() => true).forEach((req) => req.flush({ points: [] }));
+      TestBed.tick();
+      await Promise.resolve();
+
+      expect(service.referenceLap()).toBeNull();
+    });
+
+    it('restores the automatic reference when a lap is picked after "—"', async () => {
+      await openWithLaps();
+      service.select(3);
+      service.setCompare(null);
+      expect(service.referenceLap()).toBeNull();
+
+      service.setCompare(2);
+      TestBed.tick();
+      http.match(() => true).forEach((req) => req.flush({ points: [] }));
+      TestBed.tick();
+      await Promise.resolve();
+
+      expect(service.referenceLap()).toBe(2);
+    });
+
+    it('opening another session forgets an explicit "no comparison"', async () => {
+      await openWithLaps();
+      service.select(3);
+      service.setCompare(null);
+
+      service.open('session-2');
+      TestBed.tick();
+      http
+        .match((r) => r.url.endsWith('/laps'))
+        .forEach((req) =>
+          req.flush({
+            analyzedAt: '2026-08-14T09:00:00Z',
+            laps: [
+              { lapNumber: 1, lapTimeMs: 92000, isBest: true },
+              { lapNumber: 2, lapTimeMs: 93000, isBest: false },
+            ],
+          }),
+        );
+      http.match(() => true).forEach((req) => req.flush({ points: [] }));
+      TestBed.tick();
+      await Promise.resolve();
+
+      // Back to the default: the new session's best lap is the reference again.
+      service.select(2);
+      expect(service.referenceLap()).toBe(1);
+    });
+
+    it('holds no "optimal" ref on a session that has no optimal lap', async () => {
+      // Both pickers only render the Optimal option while `optimal()` is
+      // non-null, and per-option `selected` is the only thing positioning the
+      // control — so a ref with no matching option leaves the browser showing
+      // the first one. The picker would read "Lap 1" while the view still
+      // asked `/optimal/trace` for its line.
+      await openWithLaps({ withOptimal: false });
+
+      service.selectRef('optimal');
+      service.setCompare('optimal');
+      TestBed.tick();
+
+      http.expectNone((r) => r.url.endsWith('/optimal/trace'));
+      expect(service.activeLap()).toBe(1);
+      expect(service.referenceLap()).toBeNull();
+
+      http.match(() => true).forEach((req) => req.flush({ points: [] }));
+      TestBed.tick();
+      await Promise.resolve();
+    });
+
     it('reports trace loading while either trace request is in flight', async () => {
       service.open('session-1');
       TestBed.tick();
@@ -217,7 +406,9 @@ describe('LapAnalysisService', () => {
       TestBed.tick();
       await Promise.resolve();
 
-      http.match(() => true).forEach((req) => req.flush({ points: [] }, { status: 404, statusText: 'Not Found' }));
+      http
+        .match(() => true)
+        .forEach((req) => req.flush({ points: [] }, { status: 404, statusText: 'Not Found' }));
       TestBed.tick();
       await Promise.resolve();
 
@@ -234,7 +425,9 @@ describe('LapAnalysisService', () => {
     it('posts to /analyze then reloads laps and traces', async () => {
       service.open('session-1');
       TestBed.tick();
-      http.match(() => true).forEach((req) => req.flush({ points: [] }, { status: 404, statusText: 'Not Found' }));
+      http
+        .match(() => true)
+        .forEach((req) => req.flush({ points: [] }, { status: 404, statusText: 'Not Found' }));
       TestBed.tick();
       await Promise.resolve();
 
@@ -248,7 +441,9 @@ describe('LapAnalysisService', () => {
       TestBed.tick();
       const reloaded = http.match(() => true);
       expect(reloaded.length).toBeGreaterThan(0);
-      reloaded.forEach((req) => req.flush({ points: [] }, { status: 404, statusText: 'Not Found' }));
+      reloaded.forEach((req) =>
+        req.flush({ points: [] }, { status: 404, statusText: 'Not Found' }),
+      );
     });
   });
 });

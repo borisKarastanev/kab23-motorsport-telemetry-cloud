@@ -142,6 +142,12 @@
   gap: 0.75rem;
 }
 
+.map-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+}
+
 .map {
   // The map is the primary analysis tool on this page, not one panel among
   // several — tall enough to use most of the viewport's height, so the line
@@ -181,6 +187,15 @@
 
   .ghost {
     background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 7px);
+  }
+
+  /* Solid, unlike .ghost's dash — red is reserved for the optimal lap alone. */
+  .optimal {
+    background: #ff2d55;
+  }
+
+  .provenance {
+    color: var(--text);
   }
 
   .dot {

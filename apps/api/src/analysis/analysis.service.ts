@@ -4,8 +4,14 @@ import { SessionsService } from '../sessions/sessions.service';
 import { Session } from '../sessions/entities/session.entity';
 import { TracksService } from '../tracks/tracks.service';
 import { Track } from '../tracks/entities/track.entity';
+import { readyCircuit } from '../tracks/track-map/track-map.geometry';
 import { User } from '../users/entities/user.entity';
-import { AnalysisSample, DerivedLap, Gate } from './analysis.types';
+import {
+  AnalysisSample,
+  DerivedLap,
+  Gate,
+  SectorScheme,
+} from './analysis.types';
 import { AnalysisSamplesRepository } from './analysis-samples.repository';
 import { AnalysisSkipReason, LapsResponseDto } from './dto/laps-response.dto';
 import {
@@ -13,10 +19,18 @@ import {
   LapTraceDto,
   LapTracePointDto,
 } from './dto/lap-trace.dto';
+import { LapRef, OptimalLapDto } from './dto/optimal-lap.dto';
 import { Lap } from './entities/lap.entity';
 import { segmentLaps } from './lap-segmenter';
 import { buildLapTrace, compareLaps } from './lap-trace';
 import { LapsRepository } from './laps.repository';
+import { buildOptimalLap, stitchOptimalTrace } from './optimal-lap';
+import {
+  deriveSectorGates,
+  knownSectorGates,
+  SectorGatesResolution,
+} from './sector-gates';
+import { sectorTimesFromGates } from './sectors';
 
 /**
  * How many samples one request will pull into memory to derive laps.
@@ -154,10 +168,39 @@ export class AnalysisService {
     };
   }
 
+  /**
+   * The optimal lap's racing line — 404 when fewer than two laps are eligible,
+   * per the shared specification.
+   */
+  async getOptimalTrace(
+    user: User,
+    sessionId: string,
+    maxPoints: number,
+  ): Promise<LapTraceDto> {
+    const session = await this.sessionsService.requireReadableSession(
+      user,
+      sessionId,
+    );
+
+    const { plan, points } = await this.optimalTraceFor(session, maxPoints);
+
+    return {
+      lapNumber: 'optimal',
+      lapMs: plan.lapMs,
+      // The last stitched point's own cumulative distance, not `plan.distanceM`
+      // — that one is an equal-fraction approximation (see `buildOptimalLap`),
+      // and the trace already has the real, gate-clipped total. Non-empty by
+      // construction: `optimalTraceFor` throws rather than return no points.
+      distanceM: points[points.length - 1].distM,
+      points,
+      seams: plan.seams,
+    };
+  }
+
   async compare(
     user: User,
     sessionId: string,
-    lapNumbers: number[],
+    refs: LapRef[],
     maxPoints: number,
   ): Promise<LapCompareDto> {
     const session = await this.sessionsService.requireReadableSession(
@@ -165,22 +208,17 @@ export class AnalysisService {
       sessionId,
     );
 
-    const [a, b] = await Promise.all(
-      lapNumbers.map((lapNumber) => this.requireLap(session, lapNumber)),
-    );
-
     // Full-rate traces, not decimated ones: the delta is a subtraction of two
     // interpolations, and thinning the inputs first would put decimation error
     // straight into the answer. The output budget is applied to the delta
     // series itself, below.
-    const [traceA, traceB] = await Promise.all([
-      this.traceFor(a, Number.MAX_SAFE_INTEGER),
-      this.traceFor(b, Number.MAX_SAFE_INTEGER),
-    ]);
+    const [traceA, traceB] = await Promise.all(
+      refs.map((ref) => this.traceForRef(session, ref)),
+    );
 
     return {
-      lapA: a.lapNumber,
-      lapB: b.lapNumber,
+      lapA: refs[0],
+      lapB: refs[1],
       ...compareLaps(traceA, traceB, maxPoints),
     };
   }
@@ -236,12 +274,20 @@ export class AnalysisService {
       return this.skip(session, 'no-crossings', replace);
     }
 
-    const samples = await this.samplesRepository.findRange(
-      session.id,
-      from,
-      to,
-    );
-    const derived = segmentLaps(samples, gateOf(track));
+    let samples = await this.samplesRepository.findRange(session.id, from, to);
+    const sfGate = gateOf(track);
+    // Segmented once, on the S/F gate alone: resolving sector gates (below)
+    // needs a completed lap's own trace to derive or validate against, which
+    // is the chicken-and-egg this two-step order breaks. Every `DerivedLap`
+    // still carries its own `points`, so applying gates afterwards costs a
+    // pass over each lap's own (small) trace, never a second walk of the raw
+    // sample array.
+    const derived = segmentLaps(samples, sfGate);
+    // Nothing below reads the raw samples again, and they are the largest
+    // thing this request allocated. The `points` the segmenter just built are
+    // a second copy of the same session — see `releaseLapPoints`, which drops
+    // those the moment the rows are built.
+    samples = null;
 
     if (!derived.length) {
       // Samples and a gate, but no crossing: the car never completed a lap, or
@@ -255,7 +301,22 @@ export class AnalysisService {
       return this.skip(session, 'no-crossings', replace);
     }
 
-    const laps = this.toRows(session.id, derived);
+    const { laps: gatedDerived, sectorScheme } = await this.applySectorGates(
+      track,
+      sfGate,
+      derived,
+    );
+
+    const laps = this.toRows(session.id, gatedDerived);
+    // Every `DerivedLap` carries its own `points`, so between them the two
+    // arrays still hold every positioned sample of the session — the thing
+    // `LapSegmenter.closeLap`'s `this.points = null` used to release, and no
+    // longer does now that `points` is part of its result. Nothing below reads
+    // them: `toRows` has already run, and `respond` re-reads from the database.
+    // Holding a whole session's trace across three database round trips is the
+    // cost `MAX_ANALYSIS_SAMPLES` exists to bound, and this is the last point
+    // at which it can be given back.
+    releaseLapPoints(derived, gatedDerived);
     // Only now is there something to replace the old rows with. `replace`
     // clears and re-inserts in one transaction so a recompute never leaves a
     // reader looking at a session with no laps at all.
@@ -270,16 +331,111 @@ export class AnalysisService {
     // again — where stamping first would leave a session permanently showing
     // laps it never got.
     const analyzedAt = new Date();
-    await this.sessionsService.setAnalyzedAt(session.id, analyzedAt);
+    await this.sessionsService.setAnalyzedAt(
+      session.id,
+      analyzedAt,
+      sectorScheme,
+    );
     this.noCrossings.delete(session.id);
 
     // Read back rather than returning what was just built: a concurrent derive
     // may have won the insert race, and the rows in the database are the ones
     // every later read will return.
     return this.respond(
-      { ...session, analyzedAt } as Session,
+      { ...session, analyzedAt, sectorScheme } as Session,
       await this.lapsRepository.findBySession(session.id),
     );
+  }
+
+  /**
+   * Resolve this track's sector gates and, if any were found *and work here*,
+   * replace every lap's distance-fraction `sectorMs` with gate-anchored ones.
+   *
+   * The single place `sector-gates.ts` is reached from: it decides *what* the
+   * gates are, this decides *what to do with them* — apply them to the laps
+   * just segmented, and persist a brand-new derivation so every later session
+   * at this track reads it back as a plain value.
+   *
+   * **A resolved gate set is not automatically a usable one.**
+   * `sectorTimesFromGates` returns `[]` for a lap that does not cross every
+   * gate exactly once, in order — the honest answer for a lap that went off,
+   * but also what a *bad gate set* produces for every lap of a session. A set
+   * derived from one session's best lap can be a few metres wide and sit on
+   * that lap's line; another session at the same track driving a different line
+   * may miss it entirely. Applied blind, that turns a session's whole sector
+   * table into "—/—/—", takes the optimal lap with it (`pickBestSectors`
+   * excludes a lap with no splits, and under two eligible laps there is none),
+   * and leaves the caption claiming fixed gates — a strictly worse answer than
+   * the distance fractions the laps already carried. So the gated result is
+   * only kept if at least one lap actually produced splits from it; otherwise
+   * this reports `'distance'` and the segmenter's own fractions stand.
+   *
+   * The persist is likewise deferred until the set has proved itself on this
+   * session, so a derivation that turns out not to work is never written to the
+   * track for every future session to inherit.
+   */
+  private async applySectorGates(
+    track: Track,
+    sfGate: Gate,
+    derived: DerivedLap[],
+  ): Promise<{ laps: DerivedLap[]; sectorScheme: SectorScheme }> {
+    // Steps 1–2 first and on their own: `getTrackMap` below can spend up to
+    // `TRACK_MAP_FETCH_DEADLINE_MS` on an outbound Overpass fetch, and a track
+    // whose gates are surveyed or already derived needs no ring at all.
+    const resolution =
+      knownSectorGates({
+        surveyedGates: track.sectorGates,
+        persistedDerivedGates: track.derivedSectorGates ?? null,
+      }) ?? (await this.deriveSectorGatesFor(track, sfGate, derived));
+
+    if (!resolution) {
+      return { laps: derived, sectorScheme: 'distance' };
+    }
+
+    const gates = resolution.gates;
+    const laps = derived.map((lap) => ({
+      ...lap,
+      sectorMs: sectorTimesFromGates(lap.points, gates),
+    }));
+
+    if (!laps.some((lap) => lap.sectorMs.length)) {
+      // Not one lap of this session crosses the set cleanly. The session id and
+      // the gate source are what make this actionable; nothing about the
+      // driver or the trace goes into the log.
+      this.logger.warn(
+        `Track ${track.id} has ${resolution.source} sector gates that no lap of this session crosses cleanly; falling back to distance fractions`,
+      );
+      return { laps: derived, sectorScheme: 'distance' };
+    }
+
+    if (resolution.newlyDerived) {
+      await this.tracksService.setDerivedSectorGates(track.id, {
+        ...resolution.newlyDerived,
+        derivedAt: new Date().toISOString(),
+      });
+    }
+
+    return { laps, sectorScheme: 'gates' };
+  }
+
+  /** Steps 3–4, and the only thing here that needs the track map. */
+  private async deriveSectorGatesFor(
+    track: Track,
+    sfGate: Gate,
+    derived: DerivedLap[],
+  ): Promise<SectorGatesResolution | null> {
+    const referenceLap = fastestLap(derived);
+    const circuit = readyCircuit(await this.tracksService.getTrackMap(track));
+
+    return deriveSectorGates({
+      sfGate,
+      ring: circuit?.ring,
+      centrelineLengthM: circuit?.centrelineLengthM,
+      referenceLap: {
+        points: referenceLap.points,
+        distanceM: referenceLap.distanceM,
+      },
+    });
   }
 
   /**
@@ -313,14 +469,13 @@ export class AnalysisService {
   }
 
   private toRows(sessionId: string, derived: DerivedLap[]): Lap[] {
-    const bestMs = Math.min(...derived.map((lap) => lap.lapMs));
-    // `indexOf` rather than every lap matching `bestMs`: two identical lap
-    // times to the millisecond is unlikely but not impossible, and two rows
-    // flagged best would show up as two best laps in the session list.
-    const bestIndex = derived.findIndex((lap) => lap.lapMs === bestMs);
+    // The lap itself, not every lap matching its time: two identical lap times
+    // to the millisecond is unlikely but not impossible, and two rows flagged
+    // best would show up as two best laps in the session list.
+    const best = fastestLap(derived);
 
     return derived.map(
-      (lap, i) =>
+      (lap) =>
         new Lap({
           sessionId,
           lapNumber: lap.lapNumber,
@@ -332,7 +487,7 @@ export class AnalysisService {
           minSpeedKmh: lap.minSpeedKmh ?? undefined,
           sectorMs: lap.sectorMs,
           brakingPoints: lap.brakingPoints,
-          isBest: i === bestIndex,
+          isBest: lap === best,
         }),
     );
   }
@@ -382,6 +537,77 @@ export class AnalysisService {
     });
   }
 
+  /** One side of a comparison: a numbered lap's own trace, or the stitch. */
+  private async traceForRef(
+    session: Session,
+    ref: LapRef,
+  ): Promise<LapTracePointDto[]> {
+    if (ref === 'optimal') {
+      return (await this.optimalTraceFor(session, Number.MAX_SAFE_INTEGER))
+        .points;
+    }
+
+    const lap = await this.requireLap(session, ref);
+    return this.traceFor(lap, Number.MAX_SAFE_INTEGER);
+  }
+
+  /**
+   * The optimal lap's plan and stitched trace together — the one place both
+   * `getOptimalTrace` and `traceForRef('optimal')` build it, so a session
+   * being compared against `'optimal'` and a session displaying it directly
+   * can never disagree about what it is.
+   *
+   * **Throws rather than answering emptily.** `GET :id/optimal/trace` and
+   * `?laps=optimal,3` fail on exactly the same conditions — fewer than two
+   * eligible laps, or a contributing lap whose trace cannot be read — so they
+   * answer the same way. A 200 carrying `{ distanceM: 0, points: [] }` would
+   * render as an empty delta chart with no error, where the frontend already
+   * handles a missing trace through `guarded`.
+   */
+  private async optimalTraceFor(
+    session: Session,
+    maxPoints: number,
+  ): Promise<{ plan: OptimalLapDto; points: LapTracePointDto[] }> {
+    const laps = await this.lapsRepository.findBySession(session.id);
+    const plan = buildOptimalLap(laps);
+    if (!plan) {
+      throw new NotFoundException('Optimal lap not available');
+    }
+
+    // At most three contributing laps, usually one or two — never every lap
+    // of the session, and each taken once even if it won more than one sector.
+    // Read out of the rows already in hand rather than re-queried: `plan` was
+    // built from `laps` a moment ago, so a winning lap number is by
+    // construction one of them.
+    const byLapNumber = new Map(laps.map((lap) => [lap.lapNumber, lap]));
+    const contributingLaps = [
+      ...new Set(plan.sectors.map((sector) => sector.lapNumber)),
+    ].map((lapNumber) => byLapNumber.get(lapNumber));
+    const traces = await Promise.all(
+      // Full-rate first, decimate last — the same order `compare` already
+      // uses, so thinning error never enters the stitch.
+      contributingLaps.map((lap) =>
+        this.traceFor(lap, Number.MAX_SAFE_INTEGER),
+      ),
+    );
+    const contributingByLap = new Map(
+      contributingLaps.map((lap, i) => [
+        lap.lapNumber,
+        // The lap's own splits travel with its trace: the stitch cuts each
+        // sector at the instant that lap's own sector time says it ended,
+        // which is where its gate crossing was. See `stitchOptimalTrace`.
+        { sectorMs: lap.sectorMs, points: traces[i] },
+      ]),
+    );
+
+    const points = stitchOptimalTrace(plan, contributingByLap, maxPoints);
+    if (!points.length) {
+      throw new NotFoundException('Optimal lap not available');
+    }
+
+    return { plan, points };
+  }
+
   /**
    * The one place a `LapsResponseDto` is built.
    *
@@ -401,6 +627,8 @@ export class AnalysisService {
     return {
       laps,
       analyzedAt: session.analyzedAt ?? null,
+      optimal: buildOptimalLap(laps),
+      ...(session.sectorScheme ? { sectorScheme: session.sectorScheme } : {}),
       ...(reason ? { reason } : {}),
     };
   }
@@ -413,3 +641,33 @@ const gateOf = (track: Track): Gate => ({
   lat2: track.sfLat2,
   lon2: track.sfLon2,
 });
+
+/**
+ * Drop each derived lap's own trace, once the rows are built.
+ *
+ * Emptied rather than set null so the field keeps its declared type; either
+ * way what matters is that the `LapPoint[]` becomes unreachable. Takes every
+ * array the derivation touched because `applySectorGates` returns fresh lap
+ * objects that share the same `points` arrays — releasing one list and not the
+ * other would release nothing.
+ */
+function releaseLapPoints(...lapSets: DerivedLap[][]): void {
+  for (const laps of lapSets) {
+    for (const lap of laps) {
+      lap.points = [];
+    }
+  }
+}
+
+/**
+ * The quickest lap of a set, as the object itself.
+ *
+ * Two callers within one derivation: the row builder flags it `isBest`, and
+ * the gate resolution derives sector gates from it — the only reference
+ * candidate there is. Folded rather than `Math.min(...laps.map(…))`, which
+ * spreads one argument per lap and would be a stack overflow rather than a
+ * slow answer on a session whose gate only matched twice.
+ */
+function fastestLap<T extends { lapMs: number }>(laps: T[]): T {
+  return laps.reduce((best, lap) => (lap.lapMs < best.lapMs ? lap : best));
+}

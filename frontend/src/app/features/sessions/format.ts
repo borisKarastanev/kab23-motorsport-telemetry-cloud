@@ -7,7 +7,28 @@
  * `lapTime` is re-exported rather than defined here — the live view renders lap
  * times too, so it lives in `core/`.
  */
+import { LapRef } from '../../core/models/analysis.model';
+
 export { lapTime } from '../../core/format';
+
+/**
+ * A `LapRef` as a reader-facing label: `'Lap 9'`/`'lap 9'`, or `'Optimal'`
+ * either way — nobody drove it, so there is no lowercase form to shift into
+ * mid-sentence.
+ *
+ * `atSentenceStart` exists because "Lap 9" opens a legend entry and "vs lap 9"
+ * does not, and the two must not be spelled by two separate call sites that
+ * can drift.
+ */
+export function refLabel(ref: LapRef | null, atSentenceStart = true): string {
+  if (ref == null) {
+    return '';
+  }
+  if (ref === 'optimal') {
+    return 'Optimal';
+  }
+  return `${atSentenceStart ? 'Lap' : 'lap'} ${ref}`;
+}
 
 /**
  * A delta as +/-s.mmm.

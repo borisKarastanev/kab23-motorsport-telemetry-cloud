@@ -5,6 +5,7 @@ import { Session } from '../sessions/entities/session.entity';
 import { SessionsService } from '../sessions/sessions.service';
 import { Track } from '../tracks/entities/track.entity';
 import { TracksService } from '../tracks/tracks.service';
+import { PENDING } from '../tracks/track-map/track-map.types';
 import { User } from '../users/entities/user.entity';
 import { AnalysisSample } from './analysis.types';
 import { AnalysisSamplesRepository } from './analysis-samples.repository';
@@ -68,7 +69,9 @@ describe('AnalysisService', () => {
   let sessions: jest.Mocked<
     Pick<SessionsService, 'requireReadableSession' | 'setAnalyzedAt'>
   >;
-  let tracks: jest.Mocked<Pick<TracksService, 'resolve'>>;
+  let tracks: jest.Mocked<
+    Pick<TracksService, 'resolve' | 'getTrackMap' | 'setDerivedSectorGates'>
+  >;
   let laps: jest.Mocked<
     Pick<
       LapsRepository,
@@ -96,7 +99,14 @@ describe('AnalysisService', () => {
       requireReadableSession: jest.fn().mockResolvedValue(session()),
       setAnalyzedAt: jest.fn().mockResolvedValue(undefined),
     };
-    tracks = { resolve: jest.fn().mockResolvedValue(KALOYANOVO_TRACK) };
+    tracks = {
+      resolve: jest.fn().mockResolvedValue(KALOYANOVO_TRACK),
+      // No track map wired up in this suite — the reference-lap fallback
+      // (step 4 of `sector-gates.ts`) is what runs. The centreline path gets
+      // its own coverage in `sector-gates.spec.ts`.
+      getTrackMap: jest.fn().mockResolvedValue(PENDING),
+      setDerivedSectorGates: jest.fn().mockResolvedValue(undefined),
+    };
     laps = {
       findBySession: jest.fn<Promise<Lap[]>, [string]>(async () => stored),
       findOneByNumber: jest.fn(
@@ -172,7 +182,9 @@ describe('AnalysisService', () => {
       sessions.requireReadableSession.mockResolvedValue(
         session({ analyzedAt: new Date() }),
       );
-      stored = [{ lapNumber: 1 } as Lap];
+      stored = [
+        { lapNumber: 1, sectorMs: [], brakingPoints: [], distanceM: 0 } as Lap,
+      ];
 
       const result = await service.getLaps(user, SESSION_ID);
 
@@ -492,6 +504,202 @@ describe('AnalysisService', () => {
     });
   });
 
+  describe('sector scheme', () => {
+    it('stamps the session as gates-derived once a gate set resolves', async () => {
+      const result = await service.getLaps(user, SESSION_ID);
+
+      expect(result.sectorScheme).toBe('gates');
+      expect(sessions.setAnalyzedAt).toHaveBeenCalledWith(
+        SESSION_ID,
+        expect.any(Date),
+        'gates',
+      );
+    });
+
+    it('persists a freshly derived gate set exactly once', async () => {
+      await service.getLaps(user, SESSION_ID);
+
+      expect(tracks.setDerivedSectorGates).toHaveBeenCalledTimes(1);
+      expect(tracks.setDerivedSectorGates).toHaveBeenCalledWith(
+        KALOYANOVO_TRACK.id,
+        expect.objectContaining({ source: 'reference-lap' }),
+      );
+    });
+
+    it('does not fetch the track map when the gates are already known', async () => {
+      // `getTrackMap` races an outbound Overpass fetch against
+      // TRACK_MAP_FETCH_DEADLINE_MS on a cold or stale track — up to eight
+      // seconds in front of a derive whose gates were on the track row all
+      // along. Steps 1–2 of the resolution ladder need no ring at all.
+      await service.getLaps(user, SESSION_ID);
+      const [, persisted] = tracks.setDerivedSectorGates.mock.calls[0];
+
+      // The row that first derivation wrote, as the next session at this track
+      // finds it.
+      tracks.resolve.mockResolvedValue({
+        ...KALOYANOVO_TRACK,
+        derivedSectorGates: persisted,
+      } as Track);
+      tracks.getTrackMap.mockClear();
+      tracks.setDerivedSectorGates.mockClear();
+
+      const result = await service.recompute(user, SESSION_ID);
+
+      expect(result.sectorScheme).toBe('gates');
+      expect(tracks.getTrackMap).not.toHaveBeenCalled();
+      // Read back, not re-derived: nothing new to persist either.
+      expect(tracks.setDerivedSectorGates).not.toHaveBeenCalled();
+    });
+
+    it('falls back to distance fractions when no lap crosses the known gates', async () => {
+      // The poisoning case: a gate set derived from one session's best lap can
+      // be a few metres wide and sit on that lap's line, and another session at
+      // the same track driving a different line misses it entirely. Applied
+      // blind that leaves every lap with `sectorMs: []` — no sector table, no
+      // optimal lap (`pickBestSectors` needs two laps with complete splits) —
+      // for every session at that track, for good.
+      tracks.resolve.mockResolvedValue({
+        ...KALOYANOVO_TRACK,
+        derivedSectorGates: {
+          // A gate a few hundred kilometres away: crossed by nothing.
+          gates: [{ lat1: 0, lon1: 0, lat2: 0.001, lon2: 0 }],
+          source: 'reference-lap',
+          derivedAt: '2026-08-01T00:00:00.000Z',
+        },
+      } as Track);
+
+      const result = await service.getLaps(user, SESSION_ID);
+
+      expect(result.sectorScheme).toBe('distance');
+      // The distance-fraction splits the segmenter already produced, intact.
+      for (const derivedLap of result.laps) {
+        expect(derivedLap.sectorMs).toHaveLength(3);
+      }
+      expect(result.optimal).not.toBeNull();
+    });
+  });
+
+  describe('optimal lap', () => {
+    it('includes the optimal lap summary alongside the laps', async () => {
+      const result = await service.getLaps(user, SESSION_ID);
+
+      expect(result.optimal).not.toBeNull();
+      expect(result.optimal!.lapMs).toBeGreaterThan(0);
+      expect(result.optimal!.sectors).toHaveLength(3);
+    });
+
+    it("is the sum of the session's three lowest sector times", async () => {
+      const { laps: derived, optimal } = await service.getLaps(
+        user,
+        SESSION_ID,
+      );
+      const bestPerSector = [0, 1, 2].map((i) =>
+        Math.min(...derived.map((lap) => lap.sectorMs[i])),
+      );
+
+      expect(optimal!.lapMs).toBe(bestPerSector.reduce((a, b) => a + b, 0));
+      expect(optimal!.lapMs).toBeLessThanOrEqual(
+        Math.min(...derived.map((lap) => lap.lapMs)),
+      );
+    });
+
+    describe('getOptimalTrace', () => {
+      it('stitches a trace from the contributing laps', async () => {
+        await service.getLaps(user, SESSION_ID);
+
+        const trace = await service.getOptimalTrace(user, SESSION_ID, 200);
+
+        expect(trace.lapNumber).toBe('optimal');
+        expect(trace.points.length).toBeGreaterThan(1);
+        expect(trace.points[0].distM).toBe(0);
+        for (let i = 1; i < trace.points.length; i++) {
+          expect(trace.points[i].distM).toBeGreaterThanOrEqual(
+            trace.points[i - 1].distM,
+          );
+          expect(trace.points[i].elapsedMs).toBeGreaterThanOrEqual(
+            trace.points[i - 1].elapsedMs,
+          );
+        }
+        expect(trace.points[trace.points.length - 1].elapsedMs).toBe(
+          trace.lapMs,
+        );
+      });
+
+      it('404s when a contributing lap has no readable trace', async () => {
+        // A partial stitch used to come back instead: two thirds of the
+        // geometry, with the last point still pinned to the full three-sector
+        // time and a `distanceM` short by a third, all reported as complete.
+        await service.getLaps(user, SESSION_ID);
+        samples.findLapWindow.mockResolvedValue([]);
+
+        await expect(
+          service.getOptimalTrace(user, SESSION_ID, 200),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
+
+      it('404s when fewer than two laps are eligible', async () => {
+        stored = [
+          {
+            lapNumber: 1,
+            sectorMs: [],
+            brakingPoints: [],
+            distanceM: 0,
+          } as Lap,
+        ];
+        sessions.requireReadableSession.mockResolvedValue(
+          session({ analyzedAt: new Date() }),
+        );
+
+        await expect(
+          service.getOptimalTrace(user, SESSION_ID, 200),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
+    });
+
+    describe('compare', () => {
+      it("compares 'optimal' against a numbered lap", async () => {
+        await service.getLaps(user, SESSION_ID);
+
+        const result = await service.compare(
+          user,
+          SESSION_ID,
+          ['optimal', 1],
+          100,
+        );
+
+        expect(result.lapA).toBe('optimal');
+        expect(result.lapB).toBe(1);
+        expect(result.points.length).toBeGreaterThan(0);
+      });
+
+      it("compares a numbered lap against 'optimal'", async () => {
+        await service.getLaps(user, SESSION_ID);
+
+        const result = await service.compare(
+          user,
+          SESSION_ID,
+          [1, 'optimal'],
+          100,
+        );
+
+        expect(result.lapA).toBe(1);
+        expect(result.lapB).toBe('optimal');
+      });
+
+      it('404s on the same condition the trace route does', async () => {
+        // Not a 200 carrying `{ distanceM: 0, points: [] }` — that renders as
+        // an empty delta chart with no error, where the frontend already has a
+        // missing-trace path.
+        await service.getLaps(user, SESSION_ID);
+        stored = stored.map((row) => ({ ...row, sectorMs: [] }) as Lap);
+
+        await expect(
+          service.compare(user, SESSION_ID, ['optimal', 1], 100),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
+    });
+  });
+
   describe('tenant scoping', () => {
     beforeEach(() => {
       // What `requireReadableSession` throws for a session on another team's
@@ -506,6 +714,7 @@ describe('AnalysisService', () => {
       ['recompute', () => service.recompute(user, SESSION_ID)],
       ['getLapTrace', () => service.getLapTrace(user, SESSION_ID, 1, 100)],
       ['compare', () => service.compare(user, SESSION_ID, [1, 2], 100)],
+      ['getOptimalTrace', () => service.getOptimalTrace(user, SESSION_ID, 100)],
     ])('refuses %s across a tenant boundary', async (_name, call) => {
       await expect(call()).rejects.toBeInstanceOf(NotFoundException);
 

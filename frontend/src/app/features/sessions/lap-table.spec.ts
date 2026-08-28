@@ -153,4 +153,55 @@ describe('LapTable', () => {
     expect(vsButton(rowsEl()[0]).classList.contains('on')).toBe(true);
     expect(vsButton(rowsEl()[1]).classList.contains('on')).toBe(false);
   });
+
+  it('highlights no row when the active or reference ref is "optimal"', () => {
+    fixture.componentRef.setInput('laps', [makeLap({ lapNumber: 1 }), makeLap({ lapNumber: 2 })]);
+    fixture.componentRef.setInput('activeLap', 'optimal');
+    fixture.componentRef.setInput('referenceLap', 'optimal');
+    fixture.detectChanges();
+
+    for (const row of Array.from(rowsEl())) {
+      expect(row.classList.contains('active')).toBe(false);
+      expect(row.classList.contains('reference')).toBe(false);
+    }
+  });
+
+  it('disables no vs button when "optimal" is active — no row equals it', () => {
+    fixture.componentRef.setInput('laps', [makeLap({ lapNumber: 1 })]);
+    fixture.componentRef.setInput('activeLap', 'optimal');
+    fixture.detectChanges();
+
+    expect(vsButton(rowsEl()[0]).disabled).toBe(false);
+  });
+
+  describe('caption', () => {
+    it('names the legacy scheme and points at Re-analyze when sectors are distance-fraction', () => {
+      fixture.componentRef.setInput('laps', [makeLap()]);
+      fixture.componentRef.setInput('sectorScheme', 'distance');
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector('caption').textContent).toContain(
+        'Re-analyze re-derives them against fixed sector gates',
+      );
+    });
+
+    it('says the same for an undefined scheme — a session derived before the column existed', () => {
+      fixture.componentRef.setInput('laps', [makeLap()]);
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector('caption').textContent).toContain(
+        'Re-analyze re-derives them against fixed sector gates',
+      );
+    });
+
+    it('names fixed gates once the session is gate-derived', () => {
+      fixture.componentRef.setInput('laps', [makeLap()]);
+      fixture.componentRef.setInput('sectorScheme', 'gates');
+      fixture.detectChanges();
+
+      const caption = fixture.nativeElement.querySelector('caption').textContent;
+      expect(caption).toContain('fixed gates on the track');
+      expect(caption).not.toContain('Re-analyze');
+    });
+  });
 });

@@ -2,11 +2,12 @@ import { Component, DestroyRef, computed, effect, inject, input, signal } from '
 import { RouterLink } from '@angular/router';
 import { LapAnalysisService } from '../../core/services/lap-analysis.service';
 import { TrackMapService } from '../../core/services/track-map.service';
-import { AnalysisSkipReason } from '../../core/models/analysis.model';
+import { AnalysisSkipReason, LapRef } from '../../core/models/analysis.model';
 import { CHANNEL_COLOUR, ChartSeries, LineChart } from '../../core/charts/line-chart';
+import { LapPicker } from './lap-picker';
 import { LapTable } from './lap-table';
 import { RacingLine } from './racing-line';
-import { lapTime, signedSeconds } from './format';
+import { lapTime, refLabel, signedSeconds } from './format';
 
 /**
  * What each empty state means, in a driver's terms.
@@ -40,7 +41,7 @@ const REASONS: Record<AnalysisSkipReason, string> = {
  */
 @Component({
   selector: 'app-session-analysis',
-  imports: [LapTable, LineChart, RacingLine, RouterLink],
+  imports: [LapPicker, LapTable, LineChart, RacingLine, RouterLink],
   templateUrl: './session-analysis.html',
   styleUrl: './session-analysis.scss',
   // One store per view: it holds the selection for one session.
@@ -77,32 +78,84 @@ export class SessionAnalysis {
     return reason && !this.analysis.laps().length ? REASONS[reason] : null;
   });
 
-  protected readonly activeLabel = computed(() => {
-    const lap = this.analysis.activeLap();
-    return lap == null ? '' : `Lap ${lap}`;
-  });
+  protected readonly activeLabel = computed(() => refLabel(this.analysis.activeLap()));
+  protected readonly referenceLabel = computed(() => refLabel(this.analysis.referenceLap()));
+  /** The lowercase mid-sentence forms, for "… vs lap 9" / "… vs Optimal". */
+  protected readonly activeLabelLower = computed(() => refLabel(this.analysis.activeLap(), false));
+  protected readonly referenceLabelLower = computed(() =>
+    refLabel(this.analysis.referenceLap(), false),
+  );
 
-  protected readonly referenceLabel = computed(() => {
-    const lap = this.analysis.referenceLap();
-    return lap == null ? '' : `Lap ${lap}`;
-  });
-
-  /** Lap time and how it compares, for the header. */
+  /**
+   * Lap time and how it compares, for the header.
+   *
+   * `lapMsFor` reads either a numbered lap's own `lapMs` or the optimal's
+   * summed one, so the header, the delta and the chart legends all agree on
+   * what "the active lap's time" means once `activeLap()` can be `'optimal'`
+   * — nobody drove it, but it still has a time to compare against.
+   */
   protected readonly headline = computed(() => {
-    const active = this.analysis.activeLapRow();
-    if (!active) {
+    const activeRef = this.analysis.activeLap();
+    const activeMs = this.lapMsFor(activeRef);
+    if (activeMs == null) {
       return null;
     }
 
-    const laps = this.analysis.laps();
-    const reference = laps.find((lap) => lap.lapNumber === this.analysis.referenceLap());
+    const referenceRef = this.analysis.referenceLap();
+    const referenceMs = this.lapMsFor(referenceRef);
 
     return {
-      time: lapTime(active.lapMs),
-      isBest: active.isBest,
-      delta: reference ? signedSeconds(active.lapMs - reference.lapMs) : null,
-      referenceLap: reference?.lapNumber ?? null,
+      time: lapTime(activeMs),
+      // Nobody drove the optimal lap, so it is never the "Fastest" pill —
+      // that pill means an actual lap beat every other actual lap.
+      isBest: activeRef !== 'optimal' && (this.analysis.activeLapRow()?.isBest ?? false),
+      delta: referenceMs != null ? signedSeconds(activeMs - referenceMs) : null,
+      referenceLap: referenceRef,
     };
+  });
+
+  private lapMsFor(ref: LapRef | null): number | null {
+    if (ref == null) {
+      return null;
+    }
+    if (ref === 'optimal') {
+      return this.analysis.optimal()?.lapMs ?? null;
+    }
+    return this.analysis.laps().find((lap) => lap.lapNumber === ref)?.lapMs ?? null;
+  }
+
+  /** Whether the optimal lap is drawn anywhere — as the primary or the ghost. */
+  protected readonly optimalOnScreen = computed(
+    () => this.analysis.activeLap() === 'optimal' || this.analysis.referenceLap() === 'optimal',
+  );
+
+  /**
+   * The map key's optimal-lap line: which lap set each sector, and — on a
+   * legacy (distance-fraction) session — the seam caveat gate-derived
+   * sessions do not need. `null` whenever the optimal lap is not on screen.
+   */
+  protected readonly optimalCaption = computed(() => {
+    const optimal = this.analysis.optimal();
+    if (!optimal || !this.optimalOnScreen()) {
+      return null;
+    }
+
+    const provenance = optimal.sectors
+      .map((sector, i) => `S${i + 1} lap ${sector.lapNumber}`)
+      .join(' · ');
+
+    if (this.analysis.sectorScheme() === 'gates') {
+      return `Optimal — ${provenance}`;
+    }
+
+    const seams = this.analysis.seams();
+    const maxGapM = seams.length ? Math.max(...seams.map((seam) => seam.gapM)) : 0;
+    const caveat =
+      maxGapM > 30
+        ? `sector boundaries are approximate on this legacy session — seam gap up to ${maxGapM.toFixed(0)} m`
+        : 'sector boundaries are approximate on this legacy session';
+
+    return `Optimal — ${provenance} — ${caveat}`;
   });
 
   // ---------------------------------------------------------------------------
@@ -113,8 +166,10 @@ export class SessionAnalysis {
   protected readonly activePoints = computed(() => this.analysis.activeTrace()?.points ?? []);
   protected readonly referencePoints = computed(() => this.analysis.referenceTrace()?.points ?? []);
 
-  protected readonly brakingPoints = computed(
-    () => this.analysis.activeLapRow()?.brakingPoints ?? [],
+  protected readonly brakingPoints = computed(() =>
+    this.analysis.activeLap() === 'optimal'
+      ? (this.analysis.optimal()?.brakingPoints ?? [])
+      : (this.analysis.activeLapRow()?.brakingPoints ?? []),
   );
 
   protected readonly speedSeries = computed(() => this.channel((point) => point.speedKmh));
@@ -148,8 +203,8 @@ export class SessionAnalysis {
 
     return [
       {
-        label: `Lap ${compare.lapB} vs lap ${compare.lapA}`,
-        colour: '#6bd18a',
+        label: `${refLabel(compare.lapB)} vs ${refLabel(compare.lapA, false)}`,
+        colour: CHANNEL_COLOUR.delta,
         points: compare.points.map((point) => ({
           x: point.distM,
           y: point.deltaMs / 1000,
@@ -180,7 +235,13 @@ export class SessionAnalysis {
     if (reference.length) {
       series.push({
         label: this.referenceLabel(),
-        colour: CHANNEL_COLOUR.reference,
+        // Still `muted`, so the active lap stays the readable one — the
+        // optimal-red is a colour cue here, not the same solid full-weight
+        // treatment the map gives it.
+        colour:
+          this.analysis.referenceLap() === 'optimal'
+            ? CHANNEL_COLOUR.optimal
+            : CHANNEL_COLOUR.reference,
         muted: true,
         points: reference.map((p) => ({ x: p.distM, y: pick(p) })),
       });

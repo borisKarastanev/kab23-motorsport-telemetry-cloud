@@ -93,4 +93,22 @@ export class AnalysisController {
       query.maxPoints ?? DEFAULT_TRACE_POINTS,
     );
   }
+
+  /**
+   * The optimal lap's racing line — each sector's geometry from the lap that
+   * set it, stitched together. 404 when there are fewer than two eligible
+   * laps, per the shared specification.
+   */
+  @Get(':id/optimal/trace')
+  getOptimalTrace(
+    @AuthenticatedUser() user: User,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: QueryTraceDto,
+  ): Promise<LapTraceDto> {
+    return this.analysisService.getOptimalTrace(
+      user,
+      id,
+      query.maxPoints ?? DEFAULT_TRACE_POINTS,
+    );
+  }
 }

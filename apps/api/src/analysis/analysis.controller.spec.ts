@@ -26,6 +26,7 @@ describe('AnalysisController', () => {
       recompute: jest.fn(),
       getLapTrace: jest.fn(),
       compare: jest.fn(),
+      getOptimalTrace: jest.fn(),
     };
 
     controller = new AnalysisController(
@@ -116,6 +117,54 @@ describe('AnalysisController', () => {
         user,
         SESSION_ID,
         [1, 3],
+        DEFAULT_TRACE_POINTS,
+      );
+    });
+
+    it('accepts "optimal" as one of the two laps', async () => {
+      const user = asUser('user-1');
+      const query: QueryCompareDto = { laps: ['optimal', 3] };
+      const comparison = { lapA: 'optimal', lapB: 3 } as LapCompareDto;
+      analysisService.compare!.mockResolvedValue(comparison);
+
+      await controller.compare(user, SESSION_ID, query);
+
+      expect(analysisService.compare).toHaveBeenCalledWith(
+        user,
+        SESSION_ID,
+        ['optimal', 3],
+        DEFAULT_TRACE_POINTS,
+      );
+    });
+  });
+
+  describe('getOptimalTrace', () => {
+    it('uses the requested maxPoints when present', async () => {
+      const user = asUser('user-1');
+      const query: QueryTraceDto = { maxPoints: 250 };
+      const trace = { lapNumber: 'optimal' } as LapTraceDto;
+      analysisService.getOptimalTrace!.mockResolvedValue(trace);
+
+      await expect(
+        controller.getOptimalTrace(user, SESSION_ID, query),
+      ).resolves.toBe(trace);
+      expect(analysisService.getOptimalTrace).toHaveBeenCalledWith(
+        user,
+        SESSION_ID,
+        250,
+      );
+    });
+
+    it('falls back to DEFAULT_TRACE_POINTS when maxPoints is absent', async () => {
+      const user = asUser('user-1');
+      const query: QueryTraceDto = {};
+      analysisService.getOptimalTrace!.mockResolvedValue({} as LapTraceDto);
+
+      await controller.getOptimalTrace(user, SESSION_ID, query);
+
+      expect(analysisService.getOptimalTrace).toHaveBeenCalledWith(
+        user,
+        SESSION_ID,
         DEFAULT_TRACE_POINTS,
       );
     });

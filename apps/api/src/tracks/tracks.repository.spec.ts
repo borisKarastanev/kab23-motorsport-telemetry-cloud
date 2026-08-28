@@ -23,6 +23,7 @@ describe('TracksRepository', () => {
       find: jest.fn(),
       createQueryBuilder: jest.fn(),
       upsert: jest.fn(),
+      update: jest.fn(),
     };
     entityManager = { save: jest.fn() };
     repository = new TracksRepository(
@@ -86,6 +87,23 @@ describe('TracksRepository', () => {
       expect(typeormRepository.upsert).toHaveBeenCalledWith(seeds, {
         conflictPaths: ['slug'],
       });
+    });
+  });
+
+  describe('setDerivedSectorGates', () => {
+    it('writes only the derivedSectorGates column, never sectorGates', async () => {
+      const value: Track['derivedSectorGates'] = {
+        gates: [{ lat1: 1, lon1: 1, lat2: 1, lon2: 2 }],
+        source: 'centreline',
+        derivedAt: '2026-08-27T00:00:00.000Z',
+      };
+
+      await repository.setDerivedSectorGates('track-1', value);
+
+      expect(typeormRepository.update).toHaveBeenCalledWith(
+        { id: 'track-1' },
+        { derivedSectorGates: value },
+      );
     });
   });
 });

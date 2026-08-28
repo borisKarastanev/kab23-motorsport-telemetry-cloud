@@ -47,19 +47,38 @@
             <span class="pill connected">Fastest</span>
           }
           @if (h.delta) {
-            <span class="delta">{{ h.delta }} vs lap {{ h.referenceLap }}</span>
+            <span class="delta">{{ h.delta }} vs {{ referenceLabelLower() }}</span>
           }
         </div>
       }
     </section>
 
     <section class="panel map-panel">
+      <header class="map-controls">
+        <app-lap-picker
+          label="Showing"
+          [laps]="analysis.laps()"
+          [optimal]="analysis.optimal()"
+          [value]="analysis.activeLap()"
+          (valueChange)="analysis.selectRef($event)"
+        />
+        <app-lap-picker
+          label="Compare with"
+          [laps]="analysis.laps()"
+          [optimal]="analysis.optimal()"
+          [value]="analysis.referenceLap()"
+          [allowNone]="true"
+          (valueChange)="analysis.setCompare($event)"
+        />
+      </header>
+
       <div class="map">
         <app-racing-line
           [points]="activePoints()"
           [ghostPoints]="referencePoints()"
           [brakingPoints]="brakingPoints()"
           [trackMap]="trackMap.map()"
+          [ghostAppearance]="analysis.referenceLap() === 'optimal' ? 'optimal' : 'reference'"
           [resetKey]="id()"
         />
       </div>
@@ -67,8 +86,13 @@
         <span><span class="swatch slow"></span>slower</span>
         <span><span class="swatch fast"></span>faster</span>
         <span><span class="dot brake"></span>braking point</span>
-        @if (analysis.referenceLap(); as reference) {
+        @if (analysis.referenceLap() === 'optimal') {
+          <span><span class="swatch optimal"></span>Optimal</span>
+        } @else if (analysis.referenceLap(); as reference) {
           <span><span class="swatch ghost"></span>lap {{ reference }}</span>
+        }
+        @if (optimalCaption(); as caption) {
+          <span class="provenance">{{ caption }}</span>
         }
         @if (trackMap.attribution(); as attribution) {
           <span class="attribution">{{ attribution }}</span>
@@ -81,6 +105,7 @@
         [laps]="analysis.laps()"
         [activeLap]="analysis.activeLap()"
         [referenceLap]="analysis.referenceLap()"
+        [sectorScheme]="analysis.sectorScheme()"
         (select)="analysis.select($event)"
         (compare)="analysis.toggleCompare($event)"
       />
@@ -102,8 +127,8 @@
           [resetKey]="id()"
         />
         <p class="muted note">
-          Above the line, lap {{ analysis.referenceLap() }} is behind lap
-          {{ analysis.activeLap() }}. Aligned on distance, not time.
+          Above the line, {{ referenceLabelLower() }} is behind {{ activeLabelLower() }}. Aligned
+          on distance, not time.
         </p>
       </section>
     }

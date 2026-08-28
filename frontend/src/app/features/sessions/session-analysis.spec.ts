@@ -1,11 +1,22 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { signal } from '@angular/core';
 
 import { SessionAnalysis } from './session-analysis';
+import { RacingLine } from './racing-line';
 import { LapAnalysisService } from '../../core/services/lap-analysis.service';
 import { TrackMapService } from '../../core/services/track-map.service';
-import { AnalysisSkipReason, Lap, LapCompare, LapTrace } from '../../core/models/analysis.model';
+import {
+  AnalysisSkipReason,
+  Lap,
+  LapCompare,
+  LapRef,
+  LapTrace,
+  OptimalLap,
+  SectorScheme,
+  Seam,
+} from '../../core/models/analysis.model';
 import { ChartSeries } from '../../core/charts/line-chart';
 
 function makeLap(overrides: Partial<Lap> = {}): Lap {
@@ -26,6 +37,22 @@ function makeLap(overrides: Partial<Lap> = {}): Lap {
   };
 }
 
+function makeOptimal(overrides: Partial<OptimalLap> = {}): OptimalLap {
+  return {
+    lapMs: 85000,
+    distanceM: 2100,
+    sectors: [
+      { sector: 0, lapNumber: 7, sectorMs: 28000 },
+      { sector: 1, lapNumber: 9, sectorMs: 30000 },
+      { sector: 2, lapNumber: 9, sectorMs: 27000 },
+    ],
+    brakingPoints: [],
+    matchesLapNumber: null,
+    seams: [],
+    ...overrides,
+  };
+}
+
 function makeAnalysisStub() {
   return {
     laps: signal<Lap[]>([]),
@@ -33,17 +60,22 @@ function makeAnalysisStub() {
     reason: signal<AnalysisSkipReason | null>(null),
     loading: signal(false),
     error: signal<unknown>(null),
+    optimal: signal<OptimalLap | null>(null),
+    sectorScheme: signal<SectorScheme | undefined>(undefined),
     bestLap: signal<number | null>(null),
-    activeLap: signal<number | null>(null),
-    referenceLap: signal<number | null>(null),
+    activeLap: signal<LapRef | null>(null),
+    referenceLap: signal<LapRef | null>(null),
     activeLapRow: signal<Lap | undefined>(undefined),
     activeTrace: signal<LapTrace | null>(null),
     referenceTrace: signal<LapTrace | null>(null),
     compare: signal<LapCompare | null>(null),
+    seams: signal<Seam[]>([]),
     traceLoading: signal(false),
     open: vi.fn(),
     select: vi.fn(),
     toggleCompare: vi.fn(),
+    selectRef: vi.fn(),
+    setCompare: vi.fn(),
     recompute: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -178,6 +210,41 @@ describe('SessionAnalysis', () => {
 
       expect(fixture.nativeElement.textContent).toContain('+0.500 vs lap 1');
     });
+
+    it('reads "Optimal lap" with the summed time and no Fastest pill when optimal is active', () => {
+      analysis.laps.set([makeLap({ lapNumber: 7, isBest: true }), makeLap({ lapNumber: 9 })]);
+      analysis.optimal.set(makeOptimal({ lapMs: 85000 }));
+      analysis.activeLap.set('optimal');
+      create();
+
+      expect(fixture.nativeElement.textContent).toContain('Optimal');
+      expect(fixture.nativeElement.textContent).toContain('1:25.000');
+      expect(fixture.nativeElement.querySelector('.pill.connected')).toBeFalsy();
+    });
+
+    it('shows the delta when the optimal lap is compared against a numbered lap', () => {
+      const reference = makeLap({ lapNumber: 9, lapMs: 86000 });
+      analysis.laps.set([makeLap({ lapNumber: 7 }), reference]);
+      analysis.optimal.set(makeOptimal({ lapMs: 85000 }));
+      analysis.activeLap.set('optimal');
+      analysis.referenceLap.set(9);
+      create();
+
+      // Optimal (85 000) is a full second ahead of lap 9 (86 000).
+      expect(fixture.nativeElement.textContent).toContain('−1.000 vs lap 9');
+    });
+
+    it('shows the delta when a numbered lap is compared against the optimal', () => {
+      const active = makeLap({ lapNumber: 9, lapMs: 86000, isBest: true });
+      analysis.laps.set([makeLap({ lapNumber: 7 }), active]);
+      analysis.optimal.set(makeOptimal({ lapMs: 85000 }));
+      analysis.activeLap.set(9);
+      analysis.activeLapRow.set(active);
+      analysis.referenceLap.set('optimal');
+      create();
+
+      expect(fixture.nativeElement.textContent).toContain('+1.000 vs Optimal');
+    });
   });
 
   it('shows the "Analyzed" pill only once the session has been analysed', () => {
@@ -230,6 +297,130 @@ describe('SessionAnalysis', () => {
     (vsButtons[1] as HTMLButtonElement).click();
 
     expect(analysis.toggleCompare).toHaveBeenCalledWith(2);
+  });
+
+  describe('map controls', () => {
+    beforeEach(() => {
+      const lap = makeLap({ isBest: true });
+      analysis.laps.set([lap]);
+      analysis.activeLap.set(1);
+      analysis.activeLapRow.set(lap);
+    });
+
+    const selects = () =>
+      fixture.nativeElement.querySelectorAll('.map-controls select') as NodeListOf<HTMLSelectElement>;
+
+    it('forwards the "Showing" picker to selectRef', () => {
+      analysis.optimal.set(makeOptimal());
+      create();
+
+      const showing = selects()[0];
+      showing.value = 'optimal';
+      showing.dispatchEvent(new Event('change'));
+
+      expect(analysis.selectRef).toHaveBeenCalledWith('optimal');
+    });
+
+    it('forwards the "Compare with" picker to setCompare', () => {
+      create();
+
+      const compareWith = selects()[1];
+      compareWith.value = '';
+      compareWith.dispatchEvent(new Event('change'));
+
+      expect(analysis.setCompare).toHaveBeenCalledWith(null);
+    });
+
+    it('passes ghostAppearance "reference" to the racing line by default', () => {
+      create();
+
+      const racingLine = fixture.debugElement.query(By.directive(RacingLine))
+        .componentInstance as RacingLine;
+      expect(racingLine.ghostAppearance()).toBe('reference');
+    });
+
+    it('passes ghostAppearance "optimal" to the racing line when the reference is optimal', () => {
+      analysis.optimal.set(makeOptimal());
+      analysis.referenceLap.set('optimal');
+      create();
+
+      const racingLine = fixture.debugElement.query(By.directive(RacingLine))
+        .componentInstance as RacingLine;
+      expect(racingLine.ghostAppearance()).toBe('optimal');
+    });
+  });
+
+  describe('map key', () => {
+    beforeEach(() => {
+      const lap = makeLap({ isBest: true });
+      analysis.laps.set([lap]);
+      analysis.activeLap.set(1);
+      analysis.activeLapRow.set(lap);
+    });
+
+    it('shows no optimal swatch or provenance when the optimal lap is off screen', () => {
+      analysis.optimal.set(makeOptimal());
+      create();
+
+      expect(fixture.nativeElement.querySelector('.swatch.optimal')).toBeFalsy();
+      expect(fixture.nativeElement.querySelector('.provenance')).toBeFalsy();
+    });
+
+    it('swaps the ghost swatch for a solid optimal one and names the gates', () => {
+      analysis.optimal.set(makeOptimal());
+      analysis.referenceLap.set('optimal');
+      analysis.sectorScheme.set('gates');
+      create();
+
+      expect(fixture.nativeElement.querySelector('.swatch.optimal')).toBeTruthy();
+      expect(fixture.nativeElement.querySelector('.swatch.ghost')).toBeFalsy();
+      const provenance = fixture.nativeElement.querySelector('.provenance')?.textContent;
+      expect(provenance).toContain('Optimal — S1 lap 7 · S2 lap 9 · S3 lap 9');
+      expect(provenance).not.toContain('legacy');
+    });
+
+    it('carries the seam caveat on a legacy session, naming the gap once it exceeds 30 m', () => {
+      analysis.optimal.set(makeOptimal());
+      analysis.activeLap.set('optimal');
+      analysis.seams.set([
+        { distM: 700, gapM: 5 },
+        { distM: 1400, gapM: 42 },
+      ]);
+      create();
+
+      const provenance = fixture.nativeElement.querySelector('.provenance')?.textContent;
+      expect(provenance).toContain('legacy session');
+      expect(provenance).toContain('42 m');
+    });
+
+    it('still shows the optimal line even when it is on screen as the primary lap', () => {
+      analysis.optimal.set(makeOptimal());
+      analysis.activeLap.set('optimal');
+      analysis.sectorScheme.set('gates');
+      create();
+
+      expect(fixture.nativeElement.querySelector('.provenance')?.textContent).toContain('Optimal');
+    });
+  });
+
+  it('reads braking points from the optimal lap when it is active', () => {
+    const lap = makeLap({ lapNumber: 1, isBest: true, brakingPoints: [] });
+    analysis.laps.set([lap]);
+    analysis.activeLap.set('optimal');
+    const brakingPoint = {
+      distM: 400,
+      lat: 42,
+      lon: 24,
+      entrySpeedKmh: 150,
+      peakDecelG: 1.2,
+    };
+    analysis.optimal.set(makeOptimal({ brakingPoints: [brakingPoint] }));
+    create();
+
+    const brakingPoints = protectedOf<{
+      brakingPoints: () => (typeof brakingPoint)[];
+    }>().brakingPoints();
+    expect(brakingPoints).toEqual([brakingPoint]);
   });
 
   describe('chart series', () => {
@@ -296,6 +487,37 @@ describe('SessionAnalysis', () => {
       expect(speedSeries[1].points).toEqual([{ x: 0, y: 120 }]);
     });
 
+    it('colours the reference series with the optimal colour when it is the optimal lap', () => {
+      const point = {
+        distM: 0,
+        elapsedMs: 0,
+        lat: 0,
+        lon: 0,
+        speedKmh: 100,
+        rpm: 5000,
+        coolantC: 90,
+        oilC: 95,
+        gLat: 0,
+        gLon: 0,
+      };
+      analysis.activeTrace.set({ lapNumber: 1, lapMs: 92000, distanceM: 2100, points: [point] });
+      analysis.referenceTrace.set({
+        lapNumber: 'optimal',
+        lapMs: 85000,
+        distanceM: 2100,
+        points: [{ ...point, speedKmh: 130 }],
+      });
+      analysis.optimal.set(makeOptimal());
+      analysis.referenceLap.set('optimal');
+      create();
+
+      const speedSeries = protectedOf<{ speedSeries: () => ChartSeries[] }>().speedSeries();
+      // Still muted, so the active lap stays the readable line — the colour
+      // is the cue that this particular ghost is the optimal lap.
+      expect(speedSeries[1].muted).toBe(true);
+      expect(speedSeries[1].colour).toBe('#ff2d55');
+    });
+
     it('builds coolant and oil series from the active lap only', () => {
       analysis.activeTrace.set({
         lapNumber: 1,
@@ -350,6 +572,23 @@ describe('SessionAnalysis', () => {
       expect(deltaSeries).toHaveLength(1);
       expect(deltaSeries[0].label).toBe('Lap 2 vs lap 1');
       expect(deltaSeries[0].points).toEqual([{ x: 5, y: 0.184 }]);
+    });
+
+    it('reads "Optimal vs lap N" when one side of the compare is the optimal lap', () => {
+      create();
+
+      analysis.compare.set({
+        lapA: 1,
+        lapB: 'optimal',
+        distanceM: 2100,
+        points: [
+          { distM: 5, elapsedAMs: 0, elapsedBMs: 0, deltaMs: -184, speedAKmh: 100, speedBKmh: 105 },
+        ],
+      });
+      fixture.detectChanges();
+
+      const deltaSeries = protectedOf<{ deltaSeries: () => ChartSeries[] }>().deltaSeries();
+      expect(deltaSeries[0].label).toBe('Optimal vs lap 1');
     });
   });
 

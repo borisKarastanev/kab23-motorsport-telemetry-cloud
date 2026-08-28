@@ -97,7 +97,7 @@ describe('QueryCompareDto', () => {
 
     const errors = await validate(dto);
     expect(errors).toHaveLength(1);
-    expect(errors[0].constraints).toHaveProperty('isInt');
+    expect(errors[0].constraints).toHaveProperty('isLapRef');
   });
 
   it('rejects a lap number below 1', async () => {
@@ -105,7 +105,41 @@ describe('QueryCompareDto', () => {
 
     const errors = await validate(dto);
     expect(errors).toHaveLength(1);
-    expect(errors[0].constraints).toHaveProperty('min');
+    expect(errors[0].constraints).toHaveProperty('isLapRef');
+  });
+
+  it('accepts "optimal" as one side, in either position', async () => {
+    const first = plainToInstance(QueryCompareDto, { laps: 'optimal,3' });
+    const second = plainToInstance(QueryCompareDto, { laps: '3,optimal' });
+
+    expect(await validate(first)).toHaveLength(0);
+    expect(first.laps).toEqual(['optimal', 3]);
+    expect(await validate(second)).toHaveLength(0);
+    expect(second.laps).toEqual([3, 'optimal']);
+  });
+
+  it('rejects "optimal" alone — still exactly two refs required', async () => {
+    const dto = plainToInstance(QueryCompareDto, { laps: 'optimal' });
+
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].constraints).toHaveProperty('arrayMinSize');
+  });
+
+  it('rejects a garbage ref alongside a valid one', async () => {
+    const dto = plainToInstance(QueryCompareDto, { laps: 'foo,3' });
+
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].constraints).toHaveProperty('isLapRef');
+  });
+
+  it('rejects three refs even when one is "optimal"', async () => {
+    const dto = plainToInstance(QueryCompareDto, { laps: 'optimal,2,3' });
+
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].constraints).toHaveProperty('arrayMaxSize');
   });
 
   it('inherits maxPoints validation from QueryTraceDto', async () => {

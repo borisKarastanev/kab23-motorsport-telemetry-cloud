@@ -81,8 +81,27 @@ export interface DerivedLap {
   minSpeedKmh: number | null;
   /**
    * Per-sector durations, in order, summing to `lapMs`. See `sectors.ts` —
-   * these are distance-fraction splits, not gate splits.
+   * these start as distance-fraction splits and are replaced with gate splits
+   * once `AnalysisService` has resolved a gate set, which needs a completed
+   * lap to derive gates from in the first place. See `AnalysisService.derive`.
    */
   sectorMs: number[];
   brakingPoints: BrakingPoint[];
+  /**
+   * This lap's own racing line, kept only for the derivation pass itself.
+   *
+   * Never persisted — `Lap` has no such column — and never re-walked from raw
+   * samples a second time: it is what lets `AnalysisService` pick a reference
+   * lap and derive sector gates from it, and what lets a gate set resolved
+   * only after segmentation finished still be applied via
+   * `sectorTimesFromGates(points, gates)` without a second pass over the
+   * session's samples.
+   */
+  points: LapPoint[];
 }
+
+/**
+ * Whether a session's laps were split on fixed sector gates or on the legacy
+ * distance-fraction fallback. See `sectors.ts` and `sector-gates.ts`.
+ */
+export type SectorScheme = 'gates' | 'distance';

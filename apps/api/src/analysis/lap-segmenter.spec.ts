@@ -1,7 +1,13 @@
 import { AnalysisSample, Gate } from './analysis.types';
-import { MAX_FIX_GAP_MS, MIN_LAP_MS } from './gate-crossing';
-import { localFrame } from './geo';
+import {
+  findGateCrossing,
+  MAX_FIX_GAP_MS,
+  MIN_LAP_MS,
+  projectGate,
+} from './gate-crossing';
+import { distanceM, localFrame } from './geo';
 import { segmentLaps } from './lap-segmenter';
+import { resolveSectorGates } from './sector-gates';
 
 /**
  * The segmenter is exercised against the **mock publisher's own circuit
@@ -233,6 +239,94 @@ describe('LapSegmenter, against the mock circuit', () => {
     derived.forEach((lap, i) => {
       expect(Math.abs(lap.lapMs - laps[i].lapMs)).toBeLessThanOrEqual(200);
     });
+  });
+});
+
+describe('LapSegmenter, gate-anchored sectors', () => {
+  const drive = driveMock();
+  const sfOnly = segmentLaps(drive.samples, GATE);
+
+  it(// The regression test for the whole point of this change: distance-
+  // fraction sectors drift because laps of a real circuit never measure
+  // exactly the same distance. Fixed gates must not — every lap has to
+  // cross the *same physical line*, however its own measured distance
+  // came out.
+  'splits every lap at the same physical point, though laps measure different distances', () => {
+    // Unrounded, unlike `lap.distanceM`: the point is that these laps
+    // disagree on distance at all, and `distanceM` rounds to the nearest
+    // metre, which can hide a real sub-metre disagreement entirely.
+    const rawDistances = sfOnly.map((l) => l.points[l.points.length - 1].distM);
+    const spread = Math.max(...rawDistances) - Math.min(...rawDistances);
+    // Sanity check on the premise: these laps really do disagree on
+    // distance, which is exactly what would make a distance-fraction
+    // boundary drift.
+    expect(spread).toBeGreaterThan(0.1);
+
+    const reference = sfOnly[0];
+    const resolution = resolveSectorGates({
+      sfGate: GATE,
+      referenceLap: {
+        points: reference.points,
+        distanceM: reference.distanceM,
+      },
+    });
+    expect(resolution).not.toBeNull();
+    const gates = resolution!.gates;
+
+    const gated = segmentLaps(drive.samples, GATE, { sectorGates: gates });
+    expect(gated).toHaveLength(sfOnly.length);
+
+    // Every lap's S1/S2 boundary crossing, in lat/lon rather than distance —
+    // the thing a distance-fraction split cannot promise and a gate must.
+    const projected = projectGate(gates[0]);
+    const crossingPoints = gated.map((lap) => {
+      for (let i = 1; i < lap.points.length; i++) {
+        const crossing = findGateCrossing(
+          lap.points[i - 1],
+          lap.points[i],
+          projected,
+        );
+        if (crossing) {
+          return crossing;
+        }
+      }
+      throw new Error('gate not crossed');
+    });
+
+    const [first, ...rest] = crossingPoints;
+    for (const point of rest) {
+      expect(
+        distanceM(first.lat, first.lon, point.lat, point.lon),
+      ).toBeLessThan(5);
+    }
+  });
+
+  it('reports gate-derived sectors that still sum to the lap time', () => {
+    const reference = sfOnly[0];
+    const resolution = resolveSectorGates({
+      sfGate: GATE,
+      referenceLap: {
+        points: reference.points,
+        distanceM: reference.distanceM,
+      },
+    });
+    const gated = segmentLaps(drive.samples, GATE, {
+      sectorGates: resolution!.gates,
+    });
+
+    for (const lap of gated) {
+      if (!lap.sectorMs.length) {
+        // A lap whose own line clipped a corner past the gate's span is
+        // legitimately excluded — see `sectorTimesFromGates` — as long as it
+        // is not every lap.
+        continue;
+      }
+      expect(lap.sectorMs).toHaveLength(3);
+      const sum = lap.sectorMs.reduce((a, b) => a + b, 0);
+      expect(Math.abs(sum - lap.lapMs)).toBeLessThanOrEqual(2);
+    }
+
+    expect(gated.some((lap) => lap.sectorMs.length === 3)).toBe(true);
   });
 });
 

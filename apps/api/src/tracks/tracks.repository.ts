@@ -54,4 +54,20 @@ export class TracksRepository extends AbstractRepository<Track> {
   async upsertSeeds(seeds: TrackSeed[]): Promise<void> {
     await this.tracksRepository.upsert(seeds, { conflictPaths: ['slug'] });
   }
+
+  /**
+   * Persist a freshly derived sector gate set.
+   *
+   * Never touches `sectorGates` — that column is surveyed data and this one
+   * is this platform's own guess, kept separate so the two can never be
+   * confused. Unauthorized, like every other write here: a track is
+   * reference data with no owner, and the only caller is
+   * `AnalysisService`'s own derivation pass.
+   */
+  async setDerivedSectorGates(
+    trackId: string,
+    derivedSectorGates: Track['derivedSectorGates'],
+  ): Promise<void> {
+    await this.tracksRepository.update({ id: trackId }, { derivedSectorGates });
+  }
 }

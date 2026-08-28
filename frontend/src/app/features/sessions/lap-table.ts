@@ -1,24 +1,25 @@
 import { Component, computed, input, output } from '@angular/core';
-import { Lap } from '../../core/models/analysis.model';
+import { Lap, LapRef, SectorScheme } from '../../core/models/analysis.model';
 import { lapTime, signedSeconds } from './format';
 
 /**
  * The lap table — the view's index. Selecting a row drives the map and every
  * chart; the "vs" toggle picks what it is measured against.
  *
- * Sector times are shown because the plan asks for them, and labelled S1/S2/S3
- * *without* implying they are timing-loop splits: no track database this
- * platform can reach carries split points, so these are equal fractions of the
- * lap's distance. Comparable between laps of the same session, meaningless
- * against anybody else's timing screen. The header note says so rather than
- * leaving a driver to find out by disagreeing with the organiser.
+ * Sector times are shown because the plan asks for them, labelled S1/S2/S3.
+ * What that label implies depends on `sectorScheme`: fixed gates, identical
+ * for every lap and every session at the track (`'gates'`), or the legacy
+ * equal-thirds-by-distance fallback (`'distance'`, or absent on a row derived
+ * before the column existed) — the caption below says which, rather than
+ * leaving a driver to find out by disagreeing with the organiser's timing
+ * screen.
  */
 @Component({
   selector: 'app-lap-table',
   template: `
     <table>
       <caption>
-        Sectors are equal thirds of the lap by distance, not timing-loop splits
+        {{ caption() }}
       </caption>
       <thead>
         <tr>
@@ -193,11 +194,19 @@ import { lapTime, signedSeconds } from './format';
 })
 export class LapTable {
   readonly laps = input.required<Lap[]>();
-  readonly activeLap = input<number | null>(null);
-  readonly referenceLap = input<number | null>(null);
+  readonly activeLap = input<LapRef | null>(null);
+  readonly referenceLap = input<LapRef | null>(null);
+  readonly sectorScheme = input<SectorScheme | undefined>(undefined);
 
   readonly select = output<number>();
   readonly compare = output<number>();
+
+  protected readonly caption = computed(() =>
+    this.sectorScheme() === 'gates'
+      ? 'Sectors are fixed gates on the track, identical for every lap'
+      : 'Sectors are equal thirds of the lap by distance, not timing-loop splits. ' +
+        'Re-analyze re-derives them against fixed sector gates.',
+  );
 
   protected readonly rows = computed(() => {
     const laps = this.laps();

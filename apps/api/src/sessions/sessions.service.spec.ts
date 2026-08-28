@@ -389,14 +389,14 @@ describe('SessionsService', () => {
   });
 
   describe('setAnalyzedAt', () => {
-    it('stamps the session with the derivation timestamp', async () => {
+    it('stamps the session with the derivation timestamp and scheme', async () => {
       const analyzedAt = new Date('2026-08-01T12:00:00Z');
 
-      await service.setAnalyzedAt(SESSION_ID, analyzedAt);
+      await service.setAnalyzedAt(SESSION_ID, analyzedAt, 'gates');
 
       expect(sessionsRepository.findOneAndUpdate).toHaveBeenCalledWith(
         { id: SESSION_ID },
-        { analyzedAt },
+        { analyzedAt, sectorScheme: 'gates' },
       );
     });
   });

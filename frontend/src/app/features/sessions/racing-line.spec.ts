@@ -28,7 +28,7 @@ class FakeResizeObserver {
 }
 
 function fakeCanvasContext() {
-  return {
+  const ctx = {
     beginPath: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
@@ -38,13 +38,23 @@ function fakeCanvasContext() {
     setLineDash: vi.fn(),
     clearRect: vi.fn(),
     setTransform: vi.fn(),
-    strokeStyle: '',
     fillStyle: '',
     lineWidth: 0,
     lineCap: '',
     lineJoin: '',
     globalAlpha: 1,
+    /** Every value `strokeStyle` was set to, in order — a plain property only keeps the last. */
+    strokeStyleHistory: [] as string[],
   };
+  let strokeStyle = '';
+  Object.defineProperty(ctx, 'strokeStyle', {
+    get: () => strokeStyle,
+    set: (value: string) => {
+      strokeStyle = value;
+      ctx.strokeStyleHistory.push(value);
+    },
+  });
+  return ctx;
 }
 
 function tracePoint(overrides: Partial<LapTracePoint> = {}): LapTracePoint {
@@ -268,6 +278,22 @@ describe('RacingLine', () => {
       await settle();
 
       expect(ctx.setLineDash).toHaveBeenCalledWith([]);
+      // A real dash pattern was set at some point, not just the resets either side.
+      expect(ctx.setLineDash.mock.calls.some((call) => call[0].length > 0)).toBe(true);
+    });
+
+    it('draws the ghost lap solid and undashed when its appearance is optimal', async () => {
+      fixture.componentRef.setInput('ghostAppearance', 'optimal');
+      fixture.componentRef.setInput('ghostPoints', [
+        tracePoint({ lon: 0, lat: 0.001 }),
+        tracePoint({ lon: 0.01, lat: 0.001 }),
+      ]);
+      setPoints(TWO_POINTS);
+      await settle();
+
+      // Never asked for a dash pattern — every call is the reset to [].
+      expect(ctx.setLineDash.mock.calls.every((call) => call[0].length === 0)).toBe(true);
+      expect(ctx.strokeStyleHistory).toContain('#ff2d55');
     });
 
     it('draws braking-point markers', async () => {

@@ -175,6 +175,107 @@ export function decimateByDistance(
   return kept;
 }
 
+/** `lerpChannel`'s answer, in the `null` an already-nullable DTO field wants. */
+const lerpNullable = (a: number | null, b: number | null, t: number) =>
+  lerpChannel(a, b, t) ?? null;
+
+/**
+ * The two points bracketing `target` on whichever axis `key` reads, and how
+ * far between them it falls.
+ *
+ * `a === b` says there was nothing to bracket — `target` sits at or beyond one
+ * end, or the trace is a single point — and that one point is the whole
+ * answer. Both callers below read it that way, which is how they clamp to the
+ * nearer end rather than extrapolate off it.
+ *
+ * A linear scan is the whole implementation: a trace is at most a few thousand
+ * points and this runs a handful of times per lap. `sampleAtDistance` further
+ * down is *not* a caller — it resumes from a cursor across a whole comparison,
+ * which is a different traversal, not a different key.
+ */
+function bracketBy<T>(
+  points: T[],
+  key: (point: T) => number,
+  target: number,
+): { a: T; b: T; t: number } {
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (points.length < 2 || target <= key(first)) {
+    return { a: first, b: first, t: 0 };
+  }
+  if (target >= key(last)) {
+    return { a: last, b: last, t: 0 };
+  }
+
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (key(b) < target) {
+      continue;
+    }
+
+    const span = key(b) - key(a);
+    return { a, b, t: span > 0 ? (target - key(a)) / span : 0 };
+  }
+
+  return { a: last, b: last, t: 0 };
+}
+
+const byDistance = (point: LapTracePointDto) => point.distM;
+const byElapsed = (point: LapTracePointDto) => point.elapsedMs;
+
+/**
+ * A synthesized trace point at `distM`, interpolated between the two points of
+ * `points` that bracket it — clamped to the nearer end outside the trace's own
+ * range rather than extrapolating.
+ *
+ * The stitching counterpart to `sampleAtDistance` below: that one reads only
+ * elapsed time and speed, for one series of a delta chart. This one carries
+ * every channel, because `stitchOptimalTrace` draws a point from it rather
+ * than charting a single number.
+ */
+export function interpolateTracePointAt(
+  points: LapTracePointDto[],
+  distM: number,
+): LapTracePointDto {
+  const { a, b, t } = bracketBy(points, byDistance, distM);
+  // The stored point itself, not a copy of it: callers compare identity, and
+  // a rebuilt point would also re-round every channel for nothing.
+  if (a === b) {
+    return a;
+  }
+
+  return {
+    distM,
+    elapsedMs: a.elapsedMs + t * (b.elapsedMs - a.elapsedMs),
+    lat: a.lat + t * (b.lat - a.lat),
+    lon: a.lon + t * (b.lon - a.lon),
+    speedKmh: lerpNullable(a.speedKmh, b.speedKmh, t),
+    rpm: lerpNullable(a.rpm, b.rpm, t),
+    coolantC: lerpNullable(a.coolantC, b.coolantC, t),
+    oilC: lerpNullable(a.oilC, b.oilC, t),
+    gLat: lerpNullable(a.gLat, b.gLat, t),
+    gLon: lerpNullable(a.gLon, b.gLon, t),
+  };
+}
+
+/**
+ * How far along a trace the car had got at `elapsedMs`, interpolated between
+ * the two points that bracket that instant and clamped to the trace's own ends.
+ *
+ * The inverse of `interpolateTracePointAt`, and the bridge `stitchOptimalTrace`
+ * needs: a sector boundary is known as a *time* — the running sum of a lap's
+ * own `sectorMs`, i.e. the instant it crossed the gate — while every slice,
+ * every seam and the stitched axis itself are in *distance*.
+ */
+export function distanceAtElapsed(
+  points: LapTracePointDto[],
+  elapsedMs: number,
+): number {
+  const { a, b, t } = bracketBy(points, byElapsed, elapsedMs);
+  return a.distM + t * (b.distM - a.distM);
+}
+
 /**
  * Lap B measured against lap A, on a shared distance axis.
  *
