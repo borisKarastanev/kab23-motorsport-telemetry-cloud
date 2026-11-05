@@ -87,6 +87,10 @@
         },
         "serve": {
           "builder": "@angular/build:dev-server",
+          "options": {
+            "proxyConfig": "proxy.conf.json",
+            "allowedHosts": [".devtunnels.ms"]
+          },
           "configurations": {
             "production": {
               "buildTarget": "frontend:build:production"
