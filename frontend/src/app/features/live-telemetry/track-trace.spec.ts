@@ -221,5 +221,27 @@ describe('TrackTrace', () => {
       // minSpan only applies to the no-circuit fit path — see the class docblock.
       expect(world?.minSpan).toBeUndefined();
     });
+
+    it('keeps its projection origin when the rolling window drops its oldest point', async () => {
+      // Without a circuit the origin must not follow the window's first point,
+      // or every world coordinate shifts under a user's zoomed-in view.
+      const a = { lat: 41.0995, lon: 23.5 };
+      const b = { lat: 41.1005, lon: 23.5 };
+      const c = { lat: 41.1015, lon: 23.5 };
+      const trace = () =>
+        (
+          fixture.componentInstance as unknown as {
+            world: () => { trace: { x: number; y: number }[] } | null;
+          }
+        ).world()?.trace;
+
+      set([a, b, c]);
+      const before = trace()![1];
+      set([b, c]);
+      const after = trace()![0];
+
+      expect(after.x).toBeCloseTo(before.x, 9);
+      expect(after.y).toBeCloseTo(before.y, 9);
+    });
   });
 });

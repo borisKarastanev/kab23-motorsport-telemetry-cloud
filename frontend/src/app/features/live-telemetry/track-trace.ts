@@ -17,18 +17,21 @@ import {
   strokePolyline,
 } from '../../core/canvas/canvas-viewport';
 import { createCanvasViewport } from '../../core/canvas/viewport-controller';
+import {
+  LatLon,
+  localProjection,
+  METERS_PER_DEG_LAT,
+  projectCircuit,
+} from '../../core/canvas/geo-projection';
 
 /** Fraction of the track's own size left as padding around it, at the fitted (unzoomed) view. */
 const MARGIN = 0.08;
 
 /** Below this the trace is a standing car, and the fitted view must not zoom to GPS jitter. */
-const MIN_SPAN_DEGREES = 0.0005;
+const MIN_SPAN_M = 0.0005 * METERS_PER_DEG_LAT;
 
 /** How far past the fitted view a user can zoom in. Fitted view itself is the zoom-out limit. */
 const MAX_ZOOM_MULTIPLIER = 40;
-
-/** Metres per degree of latitude — good enough for a visual overlay's scale, not survey work. */
-const METERS_PER_DEG_LAT = 111000;
 
 /** Constant on-screen pixel sizes, independent of zoom — divided by `transform.scale` at draw
  * time, the canvas equivalent of SVG's `vector-effect: non-scaling-stroke`. */
@@ -183,30 +186,12 @@ export class TrackTrace {
 
     // Anchored on the circuit's own first point, so the projection is stable
     // even before the first GPS fix arrives.
-    const scale = Math.cos((circuit.geometry.coordinates[0][1] * Math.PI) / 180);
-    const points = circuit.geometry.coordinates.map(([lon, lat]) => ({
-      x: lon * scale,
-      y: -lat,
-    }));
-
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const p of points) {
-      minX = Math.min(minX, p.x);
-      maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y);
-      maxY = Math.max(maxY, p.y);
-    }
-
-    return {
-      scale,
-      points,
-      widthM: circuit.properties.widthM,
-      bounds: { minX, maxX, minY, maxY },
-    };
+    const { origin, points, bounds } = projectCircuit(circuit.geometry.coordinates);
+    return { origin, points, widthM: circuit.properties.widthM, bounds };
   });
+
+  /** Projection origin when there is no circuit — see `world`. */
+  private fallbackOrigin?: LatLon;
 
   /**
    * World-space geometry: projected trace, marker, circuit and the bounds to
@@ -223,10 +208,12 @@ export class TrackTrace {
       return null;
     }
 
-    // Equirectangular, scaled by cos(latitude) — the circuit's own anchor when
-    // there is one, so both are projected into the same frame.
-    const scale = circuit ? circuit.scale : Math.cos((points[0].lat * Math.PI) / 180);
-    const project = (point: TracePoint) => ({ x: point.lon * scale, y: -point.lat });
+    // The circuit's own anchor when there is one, so both share a frame. Without
+    // one, the first point ever seen, kept: the trace is a rolling window, so
+    // its own first point moves and would shift every coordinate under a
+    // zoomed-in view.
+    this.fallbackOrigin ??= points[0];
+    const project = localProjection(circuit ? circuit.origin : this.fallbackOrigin);
 
     let minX = Infinity;
     let maxX = -Infinity;
@@ -251,7 +238,7 @@ export class TrackTrace {
     return {
       // Fit to the circuit rather than the moving trace — see the class docblock.
       bounds: circuit ? circuit.bounds : { minX, maxX, minY, maxY },
-      minSpan: circuit ? undefined : MIN_SPAN_DEGREES,
+      minSpan: circuit ? undefined : MIN_SPAN_M,
       trace,
       marker: current ? project(current) : null,
       circuit: circuit ? { points: circuit.points, widthM: circuit.widthM } : null,
@@ -309,7 +296,7 @@ function drawScene(
     // True scale, deliberately not divided by t.scale — see racing-line.ts's
     // drawScene for why: with zoom available, zooming in is the honest way
     // to see a thin track surface clearly.
-    ctx.lineWidth = w.circuit.widthM / METERS_PER_DEG_LAT;
+    ctx.lineWidth = w.circuit.widthM;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();

@@ -21,15 +21,22 @@ import {
   worldToScreen,
 } from '../../core/canvas/canvas-viewport';
 import { createCanvasViewport } from '../../core/canvas/viewport-controller';
+import {
+  LatLon,
+  boundsOf,
+  isUsableDistance,
+  localProjection,
+  pointAtDistance,
+  projectCircuit,
+  smoothAlongDistance,
+  smoothingSigmaM,
+} from '../../core/canvas/geo-projection';
 
 /** Fraction of the track's own size left as padding around it, at the fitted (unzoomed) view. */
 const MARGIN = 0.1;
 
 /** How far past the fitted view a user can zoom in. Fitted view itself is the zoom-out limit. */
 const MAX_ZOOM_MULTIPLIER = 40;
-
-/** Metres per degree of latitude — good enough for a visual overlay's scale, not survey work. */
-const METERS_PER_DEG_LAT = 111000;
 
 /** Constant on-screen pixel sizes, independent of zoom — divided by `transform.scale` at draw
  * time, the canvas equivalent of SVG's `vector-effect: non-scaling-stroke`. */
@@ -224,34 +231,42 @@ export class RacingLine {
       return null;
     }
 
-    const scale = Math.cos((circuit.geometry.coordinates[0][1] * Math.PI) / 180);
-    const points = circuit.geometry.coordinates.map(([lon, lat]) => ({
-      x: lon * scale,
-      y: -lat,
-    }));
-
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const p of points) {
-      minX = Math.min(minX, p.x);
-      maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y);
-      maxY = Math.max(maxY, p.y);
-    }
+    const { origin, project, points, bounds } = projectCircuit(circuit.geometry.coordinates);
 
     return {
-      scale,
+      origin,
       points,
       widthM: circuit.properties.widthM,
-      bounds: { minX, maxX, minY, maxY },
+      bounds,
       corners: (map?.features.filter(isCorner) ?? []).map((feature) => {
         const mid =
           feature.geometry.coordinates[Math.floor(feature.geometry.coordinates.length / 2)];
-        return { name: feature.properties.name, x: mid[0] * scale, y: -mid[1] };
+        return { name: feature.properties.name, ...project({ lat: mid[1], lon: mid[0] }) };
       }),
     };
+  });
+
+  /**
+   * The lap and ghost, projected and smoothed, each in its own computed so a
+   * comparison toggle or braking-point change does not re-smooth an unchanged
+   * lap. The origin is the circuit's when there is one, so every layer lines up.
+   */
+  private readonly projection = computed(() =>
+    localProjection(this.circuitWorld()?.origin ?? this.points()[0]),
+  );
+  private readonly lapDistM = computed(() => this.points().map((p) => p.distM));
+  private readonly smoothedLine = computed(() =>
+    smoothTrace(this.points(), this.lapDistM(), this.projection()),
+  );
+  private readonly smoothedGhost = computed(() => {
+    const ghost = this.ghostPoints();
+    return ghost.length > 1
+      ? smoothTrace(
+          ghost,
+          ghost.map((p) => p.distM),
+          this.projection(),
+        )
+      : null;
   });
 
   /**
@@ -266,38 +281,25 @@ export class RacingLine {
       return null;
     }
 
-    // Equirectangular, scaled by cos(latitude): a degree of longitude is
-    // shorter than a degree of latitude everywhere but the equator, and
-    // without this a circuit comes out visibly stretched east-west.
     const circuit = this.circuitWorld();
-    const scale = circuit ? circuit.scale : Math.cos((points[0].lat * Math.PI) / 180);
-    const x = (p: { lon: number }) => p.lon * scale;
-    const y = (p: { lat: number }) => -p.lat;
-
-    const ghost = this.ghostPoints();
-
-    let minX = circuit ? circuit.bounds.minX : Infinity;
-    let maxX = circuit ? circuit.bounds.maxX : -Infinity;
-    let minY = circuit ? circuit.bounds.minY : Infinity;
-    let maxY = circuit ? circuit.bounds.maxY : -Infinity;
-
-    // Bounds over the lap, the ghost and the circuit, so the whole layout is
-    // framed rather than clipped and switching the comparison or the track
-    // never makes the fitted view jump.
-    for (const point of [...points, ...ghost]) {
-      const px = x(point);
-      const py = y(point);
-      minX = Math.min(minX, px);
-      maxX = Math.max(maxX, px);
-      minY = Math.min(minY, py);
-      maxY = Math.max(maxY, py);
-    }
+    const project = this.projection();
+    const line = this.smoothedLine();
+    const ghost = this.smoothedGhost();
+    const distM = this.lapDistM();
+    const byDistance = isUsableDistance(distM);
 
     return {
-      bounds: { minX, maxX, minY, maxY },
-      bands: speedBands(points, x, y),
-      ghost: ghost.length > 1 ? ghost.map((p) => ({ x: x(p), y: y(p) })) : null,
-      braking: this.brakingPoints().map((marker) => ({ ...marker, x: x(marker), y: y(marker) })),
+      // Over the lap, the ghost and the circuit, so the whole layout is framed
+      // and switching the comparison or the track never makes the fit jump.
+      bounds: boundsOf(ghost ? [line, ghost] : [line], circuit?.bounds),
+      bands: speedBands(points, line),
+      ghost,
+      // Braking points are lap samples, so placing them by distance puts them
+      // on the smoothed line rather than beside it.
+      braking: this.brakingPoints().map((marker) => ({
+        ...marker,
+        ...(byDistance ? pointAtDistance(line, distM, marker.distM) : project(marker)),
+      })),
       circuit: circuit ? { points: circuit.points, widthM: circuit.widthM } : null,
       corners: circuit ? circuit.corners : [],
     };
@@ -417,6 +419,19 @@ export class RacingLine {
 const SPEED_COLOURS = ['#3f7fe8', '#4aa3df', '#5fc9a8', '#e8c14a', '#e8543f'];
 
 /**
+ * A lap's fixes projected and smoothed along its own distance channel. The
+ * raw 10 Hz GNSS jitter otherwise reads as a line weaving left and right
+ * through every corner, which no car drives.
+ */
+function smoothTrace(
+  points: LapTracePoint[],
+  distM: number[],
+  project: (p: LatLon) => WorldPoint,
+): WorldPoint[] {
+  return smoothAlongDistance(points.map(project), distM, smoothingSigmaM(distM));
+}
+
+/**
  * The lap split into runs of constant speed band, one polyline each.
  *
  * Runs rather than one stroke per segment: a 800-point lap is 799 segments,
@@ -429,8 +444,7 @@ const SPEED_COLOURS = ['#3f7fe8', '#4aa3df', '#5fc9a8', '#e8c14a', '#e8543f'];
  */
 function speedBands(
   points: LapTracePoint[],
-  x: (p: { lon: number }) => number,
-  y: (p: { lat: number }) => number,
+  world: WorldPoint[],
 ): { points: WorldPoint[]; colour: string }[] {
   let min = Infinity;
   let max = -Infinity;
@@ -445,7 +459,7 @@ function speedBands(
   // No speed channel at all — a replayed dash session record, for one. Draw
   // the shape in a single colour rather than nothing.
   if (!Number.isFinite(min) || max - min < 1e-9) {
-    return [{ points: points.map((p) => ({ x: x(p), y: y(p) })), colour: SPEED_COLOURS[1] }];
+    return [{ points: world, colour: SPEED_COLOURS[1] }];
   }
 
   const bandOf = (speed: number | null) =>
@@ -460,9 +474,9 @@ function speedBands(
   let current = -1;
   let run: WorldPoint[] = [];
 
-  for (const point of points) {
-    const band = bandOf(point.speedKmh);
-    const pt = { x: x(point), y: y(point) };
+  for (let i = 0; i < points.length; i++) {
+    const band = bandOf(points[i].speedKmh);
+    const pt = world[i];
 
     if (band !== current) {
       if (run.length) {
@@ -500,7 +514,7 @@ function drawScene(
     // True scale, deliberately not divided by t.scale: with zoom available,
     // the honest way to see a thin track surface clearly is to zoom in on
     // it, not to fake its width relative to the view.
-    ctx.lineWidth = w.circuit.widthM / METERS_PER_DEG_LAT;
+    ctx.lineWidth = w.circuit.widthM;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();

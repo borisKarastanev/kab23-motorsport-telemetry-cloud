@@ -3,6 +3,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { RacingLine } from './racing-line';
 import { BrakingPoint, LapTracePoint } from '../../core/models/analysis.model';
 import { TrackMapGeoJson } from '../../core/models/track-map.model';
+import { METERS_PER_DEG_LAT } from '../../core/canvas/geo-projection';
 
 /**
  * jsdom implements neither `ResizeObserver` nor `HTMLCanvasElement#getContext`
@@ -73,9 +74,10 @@ function tracePoint(overrides: Partial<LapTracePoint> = {}): LapTracePoint {
   };
 }
 
-// Two points on the equator, where the equirectangular projection's
-// cos(latitude) scale factor is exactly 1 — world coordinates equal (lon, -lat)
-// with no scaling, which is what keeps the hit-testing math below simple.
+// Two points on the equator, where the projection's cos(latitude) factor is
+// exactly 1 — world coordinates are metres from the first point,
+// (lon·METERS_PER_DEG_LAT, −lat·METERS_PER_DEG_LAT), which keeps the
+// hit-testing math below simple.
 const TWO_POINTS: LapTracePoint[] = [
   tracePoint({ distM: 0, lon: 0, lat: 0 }),
   tracePoint({ distM: 100, lon: 0.01, lat: 0 }),
@@ -136,9 +138,6 @@ describe('RacingLine', () => {
     const brakingPoint: BrakingPoint = {
       distM: 50,
       lat: 0,
-      // World x equals lon (scale 1 at the equator); kept small so it stays
-      // within canvas-viewport's fitted-identity transform used before any
-      // real container size has been observed.
       lon: 0.005,
       entrySpeedKmh: 80,
       peakDecelG: 1.2,
@@ -151,6 +150,9 @@ describe('RacingLine', () => {
 
     const canvas = () => fixture.nativeElement.querySelector('canvas') as HTMLCanvasElement;
 
+    /** Where the marker lands in world space — screen space too, under the identity transform. */
+    const markerX = brakingPoint.lon * METERS_PER_DEG_LAT;
+
     const move = (x: number, y: number) => {
       canvas().dispatchEvent(
         new PointerEvent('pointermove', { clientX: x, clientY: y, bubbles: true }),
@@ -161,8 +163,8 @@ describe('RacingLine', () => {
     it('shows a tooltip when the pointer lands on a braking marker', () => {
       // No container has been observed, so canvas-viewport's fit() is the
       // identity transform — screen coordinates equal the marker's world
-      // coordinates (lon, -lat) directly.
-      move(brakingPoint.lon, -brakingPoint.lat);
+      // coordinates (metres from the first point) directly.
+      move(markerX, 0);
 
       const tooltip = fixture.nativeElement.querySelector('.tooltip');
       expect(tooltip?.textContent).toContain('Braking at 50 m — 80 km/h, 1.2 g');
@@ -175,7 +177,7 @@ describe('RacingLine', () => {
     });
 
     it('clears the tooltip on pointer leave', () => {
-      move(brakingPoint.lon, -brakingPoint.lat);
+      move(markerX, 0);
       expect(fixture.nativeElement.querySelector('.tooltip')).toBeTruthy();
 
       canvas().dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
@@ -296,9 +298,83 @@ describe('RacingLine', () => {
       expect(ctx.strokeStyleHistory).toContain('#ff2d55');
     });
 
+    /** Every coordinate passed to moveTo/lineTo, flattened. */
+    const pathCoords = () =>
+      [...ctx.moveTo.mock.calls, ...ctx.lineTo.mock.calls].flatMap(([x, y]) => [x, y]);
+
+    it('draws in local metres near zero, not in degrees, at a real latitude', async () => {
+      // Kaloyanovo-ish. In degrees these would be ~18 and ~-42, where a float32
+      // canvas path snaps to a ~0.4 m grid and breaks up when zoomed.
+      const lap = Array.from({ length: 50 }, (_, i) =>
+        tracePoint({ distM: i * 2, lat: 42.34 + i * 1e-5, lon: 24.73 + i * 1e-5 }),
+      );
+      setPoints(lap);
+      await settle();
+
+      const coords = pathCoords();
+      expect(coords.length).toBeGreaterThan(0);
+      expect(Math.max(...coords.map(Math.abs))).toBeLessThan(200);
+    });
+
+    // A straight east-west run with ±0.7 m of alternating north-south jitter.
+    const JITTER_DEG = 0.7 / METERS_PER_DEG_LAT;
+    const jitteredLap = () =>
+      Array.from({ length: 60 }, (_, i) =>
+        tracePoint({ distM: i * 2, lat: i % 2 ? JITTER_DEG : -JITTER_DEG, lon: i * 2e-5 }),
+      );
+
+    it('smooths GPS jitter out of a straight line', async () => {
+      setPoints(jitteredLap());
+      await settle();
+
+      // Raw y would be ±0.7 m around the first point's own -0.7 m offset; the
+      // middle of the drawn line should be flat to within a few centimetres.
+      const ys = ctx.lineTo.mock.calls.slice(10, 40).map(([, y]) => y as number);
+      const spread = Math.max(...ys) - Math.min(...ys);
+      expect(spread).toBeLessThan(0.1);
+    });
+
+    it('places braking markers on the smoothed line by their distance into the lap', async () => {
+      // The raw fix for sample 31 sits 0.7 m north of the line.
+      fixture.componentRef.setInput('brakingPoints', [
+        { distM: 62, lat: JITTER_DEG, lon: 31 * 2e-5, entrySpeedKmh: 80, peakDecelG: 1 },
+      ] satisfies BrakingPoint[]);
+      setPoints(jitteredLap());
+      await settle();
+
+      const [, y] = ctx.arc.mock.calls[0];
+      // Origin is sample 0, itself 0.7 m south: the smoothed line runs ~0.7 m
+      // north of it in world y (≈ -0.7, since y grows south), not at the raw -1.4.
+      expect(y).toBeCloseTo(-0.7, 1);
+    });
+
+    it('still draws the lap, and places markers by lat/lon, when distance is missing', async () => {
+      // A replayed dash record can lack the distance channel. One NaN used to
+      // poison every smoothed point and blank the canvas.
+      const lap = Array.from({ length: 20 }, (_, i) =>
+        tracePoint({ distM: NaN, lat: 0, lon: i * 1e-4 }),
+      );
+      fixture.componentRef.setInput('brakingPoints', [
+        { distM: 10, lat: 0, lon: 5e-4, entrySpeedKmh: 80, peakDecelG: 1 },
+      ] satisfies BrakingPoint[]);
+      setPoints(lap);
+      await settle();
+
+      expect(pathCoords().every(Number.isFinite)).toBe(true);
+      expect(ctx.stroke).toHaveBeenCalled();
+      const [x] = ctx.arc.mock.calls[0];
+      expect(x).toBeCloseTo(5e-4 * METERS_PER_DEG_LAT, 3);
+    });
+
     it('draws braking-point markers', async () => {
       fixture.componentRef.setInput('brakingPoints', [
-        { distM: 50, lat: 0, lon: 0.005, entrySpeedKmh: 80, peakDecelG: 1.2 } satisfies BrakingPoint,
+        {
+          distM: 50,
+          lat: 0,
+          lon: 0.005,
+          entrySpeedKmh: 80,
+          peakDecelG: 1.2,
+        } satisfies BrakingPoint,
       ]);
       setPoints(TWO_POINTS);
       await settle();
